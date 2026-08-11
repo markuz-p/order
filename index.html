@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Promedic Ambulance Upfitters &mdash; Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Barlow+Condensed:wght@400;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --bg-0:#0a0e17;
+  --bg-1:#0f1420;
+  --bg-2:#151c2c;
+  --bg-3:#1c2438;
+  --border:#22304a;
+  --border-bright:#2e4266;
+  --text:#dce3ef;
+  --text-muted:#7a8699;
+  --text-dim:#4a5468;
+  --accent:#38bdf8;
+  --accent-dim:#0c4a6e;
+  --red:#ef4444;
+  --amber:#f59e0b;
+  --green:#22c55e;
+  --navy:#1a2744;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{background:var(--bg-0);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh;-webkit-font-smoothing:antialiased;}
+a{color:inherit;text-decoration:none;}
+
+     <!-- Favicon -->
+  
+    <link rel="icon" type="image/png" href="favicon-32x32">
+    
+    <link rel="stylesheet" href="style.css">
+  
+/* ── TOP BAR ── */
+.topbar{
+  background:var(--bg-1);
+  border-bottom:1px solid var(--border);
+  padding:0 24px;
+  height:64px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  position:sticky;top:0;z-index:100;
+}
+.brand{display:flex;align-items:center;gap:14px;}
+.brand img{height:42px;display:block;}
+.brand-text{display:flex;flex-direction:column;line-height:1;}
+.brand-name{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:20px;letter-spacing:.5px;color:#fff;}
+.brand-sub{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;margin-top:2px;}
+
+.topbar-right{display:flex;align-items:center;gap:8px;}
+.status-pill{
+  display:flex;align-items:center;gap:8px;
+  padding:6px 12px;
+  background:var(--bg-2);
+  border:1px solid var(--border);
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;
+  color:var(--text-muted);
+  letter-spacing:1px;
+}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);}
+
+/* Auth buttons */
+.auth-btn{
+  padding:8px 18px;
+  font-family:'Inter',sans-serif;
+  font-size:13px;
+  font-weight:500;
+  letter-spacing:.3px;
+  border:1px solid var(--border);
+  background:transparent;
+  color:var(--text);
+  cursor:pointer;
+  transition:all .15s;
+  text-decoration:none;
+  display:inline-flex;align-items:center;
+}
+.auth-btn:hover{background:var(--bg-2);border-color:var(--border-bright);}
+.auth-btn.primary{background:var(--accent);color:var(--bg-0);border-color:var(--accent);font-weight:600;}
+.auth-btn.primary:hover{background:#7dd3fc;border-color:#7dd3fc;}
+.auth-btn.danger{border-color:rgba(239,68,68,.4);color:var(--red);}
+.auth-btn.danger:hover{background:rgba(239,68,68,.08);border-color:var(--red);}
+
+/* User pill */
+.user-pill{
+  display:flex;align-items:center;gap:8px;
+  padding:6px 12px;
+  background:var(--bg-2);
+  border:1px solid var(--border);
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;
+  color:var(--accent);
+  letter-spacing:1px;
+}
+
+/* ── NAV ROW ── */
+.navbar{
+  background:var(--bg-1);
+  border-bottom:1px solid var(--border);
+  padding:0 24px;
+  display:flex;
+  align-items:center;
+  gap:0;
+  overflow-x:auto;
+}
+.nav-item{
+  padding:14px 20px;
+  font-size:13px;
+  font-weight:500;
+  color:var(--text-muted);
+  border-bottom:2px solid transparent;
+  transition:all .15s;
+  white-space:nowrap;
+  letter-spacing:.2px;
+  display:flex;align-items:center;gap:8px;
+}
+.nav-item:hover{color:var(--text);background:var(--bg-2);}
+.nav-item.active{color:#fff;border-bottom-color:var(--accent);background:var(--bg-2);}
+.nav-item-icon{width:14px;height:14px;opacity:.7;}
+
+/* ── MAIN ── */
+.main{max-width:1440px;margin:0 auto;padding:32px 24px 80px;}
+
+/* ── SECTION HEADER ── */
+.section-hdr{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid var(--border);
+}
+.section-title{
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:22px;font-weight:700;letter-spacing:1.5px;
+  text-transform:uppercase;color:#fff;
+}
+.section-meta{
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;color:var(--text-muted);letter-spacing:1.5px;
+}
+
+/* ── STATS STRIP ── */
+.stats-strip{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:1px;background:var(--border);
+  border:1px solid var(--border);
+  margin-bottom:40px;
+}
+.stat-cell{
+  background:var(--bg-1);padding:18px 20px;display:flex;flex-direction:column;gap:4px;
+}
+.stat-label{
+  font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:1.5px;
+  color:var(--text-muted);text-transform:uppercase;
+}
+.stat-value{
+  font-family:'Barlow Condensed',sans-serif;font-size:32px;font-weight:700;color:#fff;line-height:1;
+}
+.stat-delta{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--green);margin-top:2px;}
+.stat-delta.neg{color:var(--red);}
+.stat-delta.neutral{color:var(--text-muted);}
+
+/* ── MODULE GRID ── */
+.modules{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1px;background:var(--border);border:1px solid var(--border);}
+.module{
+  background:var(--bg-1);padding:24px;display:flex;flex-direction:column;gap:14px;
+  transition:background .15s;cursor:pointer;text-decoration:none;color:inherit;position:relative;
+}
+.module:hover{background:var(--bg-2);}
+.module:hover .module-arrow{transform:translateX(4px);color:var(--accent);}
+.module-head{display:flex;align-items:center;justify-content:space-between;}
+.module-id{
+  font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-muted);
+  letter-spacing:2px;text-transform:uppercase;
+}
+.module-arrow{font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--text-muted);transition:all .15s;}
+.module-title{
+  font-family:'Barlow Condensed',sans-serif;font-size:24px;font-weight:700;color:#fff;
+  letter-spacing:.5px;line-height:1.1;text-transform:uppercase;
+}
+.module-desc{font-size:13px;color:var(--text-muted);line-height:1.55;}
+.module-foot{
+  display:flex;align-items:center;gap:16px;padding-top:12px;border-top:1px solid var(--border);
+  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted);letter-spacing:.5px;
+}
+.foot-metric{display:flex;align-items:center;gap:6px;}
+.foot-metric strong{color:var(--text);font-weight:500;}
+
+/* ── ACTIVITY LOG ── */
+.activity{
+  border:1px solid var(--border);margin-top:40px;background:var(--bg-1);
+}
+.activity-hdr{
+  padding:14px 20px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  font-family:'JetBrains Mono',monospace;font-size:11px;
+  color:var(--text-muted);letter-spacing:1.5px;text-transform:uppercase;
+}
+.activity-row{
+  padding:12px 20px;display:grid;
+  grid-template-columns:120px 80px 1fr 100px;
+  gap:16px;align-items:center;font-size:13px;border-bottom:1px solid var(--border);
+}
+.activity-row:last-child{border-bottom:none;}
+.activity-row:hover{background:var(--bg-2);}
+.act-time{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted);letter-spacing:.5px;}
+.act-tag{
+  font-family:'JetBrains Mono',monospace;font-size:10px;padding:3px 8px;
+  letter-spacing:1px;text-transform:uppercase;text-align:center;
+}
+.tag-order{background:rgba(56,189,248,.1);color:var(--accent);border:1px solid var(--accent-dim);}
+.tag-part{background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.3);}
+.tag-vendor{background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.3);}
+.tag-auth{background:rgba(139,92,246,.1);color:#a78bfa;border:1px solid rgba(139,92,246,.3);}
+.act-desc{color:var(--text);}
+.act-user{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-muted);text-align:right;}
+
+/* ── AUTH GATE ── */
+.auth-gate{
+  display:none;
+  flex-direction:column;align-items:center;justify-content:center;
+  min-height:40vh;text-align:center;gap:20px;padding:60px 20px;
+}
+.auth-gate-icon{font-family:'JetBrains Mono',monospace;font-size:32px;color:var(--text-dim);margin-bottom:8px;}
+.auth-gate-title{font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:1px;}
+.auth-gate-sub{font-size:13px;color:var(--text-muted);max-width:400px;line-height:1.6;}
+.auth-gate-btns{display:flex;gap:10px;margin-top:8px;}
+
+/* ── FOOTER ── */
+.footer{
+  border-top:1px solid var(--border);
+  padding:20px 24px;margin-top:60px;
+  display:flex;align-items:center;justify-content:space-between;
+  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:1px;
+}
+
+@media (max-width:640px){
+  .topbar{padding:0 16px;height:56px;}
+  .brand-sub{display:none;}
+  .auth-btn{padding:6px 12px;font-size:12px;}
+  .main{padding:20px 16px 60px;}
+  .activity-row{grid-template-columns:80px 70px 1fr;gap:10px;}
+  .act-user{display:none;}
+}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <a href="index.html" class="brand">
+    <div class="brand-text">
+      <div class="brand-name">PROMEDIC</div>
+      <div class="brand-sub">Ambulance Upfitters</div>
+    </div>
+  </a>
+  <div class="topbar-right">
+    <div class="status-pill">
+      <div class="status-dot"></div>
+      <span id="sysTime">SYSTEM ONLINE</span>
+    </div>
+
+    <!-- Shown when logged OUT -->
+    <div id="authOut" style="display:flex;gap:8px;">
+      <a href="promedic_login.html" class="auth-btn">Log in</a>
+      <a href="promedic_register.html" class="auth-btn primary">Register</a>
+    </div>
+
+    <!-- Shown when logged IN -->
+    <div id="authIn" style="display:none;gap:8px;align-items:center;">
+      <div class="user-pill" id="userPill">USER</div>
+      <button class="auth-btn danger" onclick="handleLogout()">Log out</button>
+    </div>
+  </div>
+</div>
+
+<!-- NAV ROW -->
+<nav class="navbar">
+  <a href="index.html" class="nav-item active">
+    <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+    Command Center
+  </a>
+  <a href="promedic_parts_catalog.html" class="nav-item">
+    <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7L12 3 4 7l8 4 8-4zM4 7v10l8 4 8-4V7M12 11v10"/></svg>
+    Parts Catalog
+  </a>
+  <a href="promedic_order_tracker.html" class="nav-item">
+    <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+    Order Tracker
+  </a>
+  <a href="promedic_vendor_directory.html" class="nav-item">
+    <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2h-4v-8H10v8H6a2 2 0 01-2-2z"/></svg>
+    Vendor Directory
+  </a>
+</nav>
+
+<!-- MAIN -->
+<main class="main" id="mainContent">
+
+  <!-- AUTH GATE (shown when logged out) -->
+  <div class="auth-gate" id="authGate">
+    <div class="auth-gate-icon">[//]</div>
+    <div class="auth-gate-title">Authentication Required</div>
+    <div class="auth-gate-sub">You must be logged in to access the Promedic Command Center. Log in with your operations account or register to get started.</div>
+    <div class="auth-gate-btns">
+      <a href="promedic_login.html" class="auth-btn primary">Log in</a>
+      <a href="promedic_register.html" class="auth-btn">Register</a>
+    </div>
+  </div>
+
+  <!-- PROTECTED CONTENT (shown when logged in) -->
+  <div id="protectedContent" style="display:none;">
+
+    <!-- STATS -->
+    <div class="section-hdr">
+      <div class="section-title">Operations Overview</div>
+      <div class="section-meta" id="dateTime">&mdash;</div>
+    </div>
+
+    <div class="stats-strip">
+      <div class="stat-cell">
+        <div class="stat-label">Active Parts</div>
+        <div class="stat-value">188</div>
+        <div class="stat-delta">+3 this week</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Suppliers</div>
+        <div class="stat-value">27</div>
+        <div class="stat-delta neutral">No change</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Open Orders</div>
+        <div class="stat-value">12</div>
+        <div class="stat-delta neg">3 delayed</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Active Builds</div>
+        <div class="stat-value">01</div>
+        <div class="stat-delta neutral">RP90 Medix</div>
+      </div>
+    </div>
+
+    <!-- MODULES -->
+    <div class="section-hdr">
+      <div class="section-title">Modules</div>
+      <div class="section-meta">03 AVAILABLE</div>
+    </div>
+
+    <div class="modules">
+      <a href="promedic_parts_catalog.html" class="module">
+        <div class="module-head">
+          <div class="module-id">MOD / 001</div>
+          <div class="module-arrow">&rarr;</div>
+        </div>
+        <div class="module-title">Parts Catalog</div>
+        <div class="module-desc">Unified parts database with MD5 fingerprinted keys. Search, filter, and cross-reference components across all active builds.</div>
+        <div class="module-foot">
+          <div class="foot-metric"><strong>188</strong> parts</div>
+          <div class="foot-metric"><strong>27</strong> suppliers</div>
+          <div class="foot-metric"><strong>PAUL-00001</strong> to <strong>00188</strong></div>
+        </div>
+      </a>
+      <a href="promedic_order_tracker.html" class="module">
+        <div class="module-head">
+          <div class="module-id">MOD / 002</div>
+          <div class="module-arrow">&rarr;</div>
+        </div>
+        <div class="module-title">Order Tracker</div>
+        <div class="module-desc">Full procurement pipeline — from quote to receipt. Track PO status, lead times, and delivery against build schedules.</div>
+        <div class="module-foot">
+          <div class="foot-metric"><strong>12</strong> open</div>
+          <div class="foot-metric"><strong>03</strong> delayed</div>
+          <div class="foot-metric"><strong>BOM:</strong> RP90</div>
+        </div>
+      </a>
+      <a href="promedic_vendor_directory.html" class="module">
+        <div class="module-head">
+          <div class="module-id">MOD / 003</div>
+          <div class="module-arrow">&rarr;</div>
+        </div>
+        <div class="module-title">Vendor Directory</div>
+        <div class="module-desc">Supplier contacts, terms, lead time history, and performance metrics. Integrated with catalog and order records.</div>
+        <div class="module-foot">
+          <div class="foot-metric"><strong>27</strong> active</div>
+          <div class="foot-metric"><strong>Logistics</strong> tier</div>
+        </div>
+      </a>
+    </div>
+
+    <!-- ACTIVITY -->
+    <div class="section-hdr" style="margin-top:40px;">
+      <div class="section-title">Recent Activity</div>
+      <div class="section-meta">LOCAL // LAST 24h</div>
+    </div>
+
+    <div class="activity">
+      <div class="activity-hdr">
+        <span>TIMESTAMP &nbsp; // &nbsp; TYPE &nbsp; // &nbsp; EVENT</span>
+        <span>USER</span>
+      </div>
+      <div class="activity-row" id="loginActivityRow" style="display:none;">
+        <div class="act-time" id="loginActivityTime">--:--:--</div>
+        <div class="act-tag tag-auth">AUTH</div>
+        <div class="act-desc" id="loginActivityDesc">Session started</div>
+        <div class="act-user" id="loginActivityUser">--</div>
+      </div>
+      <div class="activity-row">
+        <div class="act-time">14:32:07</div>
+        <div class="act-tag tag-part">PART</div>
+        <div class="act-desc">Added PAUL-00188 &mdash; Whelen M6 marker, amber LED</div>
+        <div class="act-user">markuz</div>
+      </div>
+      <div class="activity-row">
+        <div class="act-time">11:18:44</div>
+        <div class="act-tag tag-order">ORDER</div>
+        <div class="act-desc">PO-0043 status &rarr; shipped (Tecniq)</div>
+        <div class="act-user">markuz</div>
+      </div>
+      <div class="activity-row">
+        <div class="act-time">09:02:11</div>
+        <div class="act-tag tag-vendor">VENDOR</div>
+        <div class="act-desc">Updated lead time for Whelen Engineering &mdash; 14d standard</div>
+        <div class="act-user">markuz</div>
+      </div>
+      <div class="activity-row">
+        <div class="act-time">08:47:29</div>
+        <div class="act-tag tag-part">PART</div>
+        <div class="act-desc">BOM updated &mdash; RP90 Medix (11 parts linked)</div>
+        <div class="act-user">markuz</div>
+      </div>
+    </div>
+
+  </div><!-- end protectedContent -->
+</main>
+
+<!-- FOOTER -->
+<div class="footer">
+  <div>PROMEDIC / LOCAL BUILD // v2.1.0</div>
+  <div>GREENWOOD, MS &nbsp; // &nbsp; OPERATIONS</div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://xizxpxvtkhwowpfjfsdy.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhpenhweHZ0a2h3b3dwZmpmc2R5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2NzI0MjgsImV4cCI6MjA5MjI0ODQyOH0.v-HDR2Urxxe2Cr4BjyQx578e_9NimH9dlSbJlQd2UW4';
+  const { createClient } = supabase;
+  const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // ── Time display ──
+  function updateTime() {
+    const d = new Date();
+    const opts = { month:'short', day:'2-digit', year:'numeric' };
+    const date = d.toLocaleDateString('en-US', opts).toUpperCase();
+    const time = d.toLocaleTimeString('en-US', { hour12:false });
+    const dateEl = document.getElementById('dateTime');
+    const sysEl = document.getElementById('sysTime');
+    if (dateEl) dateEl.textContent = date + ' // ' + time;
+    if (sysEl) sysEl.textContent = 'ONLINE ' + time;
+  }
+  updateTime();
+  setInterval(updateTime, 1000);
+
+  // ── Auth state ──
+  function showAuthed(user) {
+    document.getElementById('authOut').style.display = 'none';
+    const authIn = document.getElementById('authIn');
+    authIn.style.display = 'flex';
+
+    // Display name from metadata or email
+    const meta = user.user_metadata || {};
+    const name = meta.full_name || meta.first_name || user.email.split('@')[0];
+    document.getElementById('userPill').textContent = name.toUpperCase();
+
+    // Show protected content, hide gate
+    document.getElementById('authGate').style.display = 'none';
+    document.getElementById('protectedContent').style.display = 'block';
+
+    // Log login event in activity row
+    const now = new Date();
+    const time = now.toLocaleTimeString('en-US', { hour12:false });
+    document.getElementById('loginActivityRow').style.display = 'grid';
+    document.getElementById('loginActivityTime').textContent = time;
+    document.getElementById('loginActivityDesc').textContent = `Session started — ${meta.role || 'Operations'}`;
+    document.getElementById('loginActivityUser').textContent = (meta.first_name || user.email.split('@')[0]).toLowerCase();
+  }
+
+  function showUnauthed() {
+    document.getElementById('authOut').style.display = 'flex';
+    document.getElementById('authIn').style.display = 'none';
+    document.getElementById('authGate').style.display = 'flex';
+    document.getElementById('protectedContent').style.display = 'none';
+  }
+
+  // ── Check session on load ──
+  sb.auth.getSession().then(({ data: { session } }) => {
+    if (session) {
+      showAuthed(session.user);
+    } else {
+      showUnauthed();
+    }
+  });
+
+  // ── Listen for auth state changes ──
+  sb.auth.onAuthStateChange((event, session) => {
+    if (session) {
+      showAuthed(session.user);
+    } else {
+      showUnauthed();
+    }
+  });
+
+  // ── Logout ──
+  async function handleLogout() {
+    await sb.auth.signOut();
+    showUnauthed();
+  }
+</script>
+
+</body>
+</html>
