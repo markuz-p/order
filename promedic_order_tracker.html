@@ -19,6 +19,23 @@
   --s-submitted:#6366f1; --s-shipped:#8b5cf6; --s-received:#1f9d55; --s-cancelled:#b0453f;
   --radius:12px; --shadow:0 1px 2px rgba(16,32,55,.06),0 8px 24px rgba(16,32,55,.06);
 }
+body.dark{
+  --bg:#0c1420; --surface:#131f30; --ink:#e6edf5; --muted:#9fb0c4; --line:#26374d;
+  --brand:#4b86ff; --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35);
+  --s-needed:#8593a6; --s-quoted:#5a9bff; --s-awaiting:#f0a500;
+  --s-submitted:#8189ff; --s-shipped:#a78bfa; --s-received:#3cc47c; --s-cancelled:#c66;
+}
+body.dark thead th{background:#1a2a3f}
+body.dark tbody tr:hover{background:#1a2740}
+body.dark .stage .n,body.dark .stage .lb,body.dark .bcard .amt{color:var(--ink)}
+body.dark .tabs{background:#1a2740}
+body.dark .tab.active{background:#243349}
+body.dark .search input,body.dark .field input,body.dark .field select,body.dark .field textarea,
+body.dark .fchip,body.dark .li input,body.dark .recv-row .rq input{background:#0f1a29;color:var(--ink)}
+body.dark .fchip.on{background:var(--brand);border-color:var(--brand);color:#fff}
+body.dark .x,body.dark .btn.sub{background:#243349;color:var(--ink)}
+body.dark .empty h3,body.dark .mhead h2,body.dark .badge.soft{color:var(--ink)}
+body.dark .pcard .ph,body.dark .photobox .prev,body.dark .prow .thumb{background:#0f1a29}
 *{box-sizing:border-box}
 html,body{margin:0}
 body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.45}
@@ -190,6 +207,10 @@ tbody tr:last-child td{border-bottom:none}
 .login-card .logo{width:52px;height:52px;margin:0 auto 14px}
 .login-card h2{font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.04em;text-align:center;margin:0 0 4px;font-size:20px}
 .login-card p{text-align:center;color:var(--muted);font-size:13px;margin:0 0 22px}
+.powered{text-align:center;margin-top:18px;font-size:12px;color:var(--muted);letter-spacing:.02em;display:flex;align-items:center;justify-content:center;gap:7px}
+.powered strong{color:var(--ink);font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.powered .pdot{width:14px;height:14px;border-radius:4px;background:#13294d;position:relative;flex:none;display:inline-block}
+.powered .pdot::after{content:"";position:absolute;top:2.5px;right:2.5px;width:3px;height:3px;border-radius:50%;background:var(--amber)}
 .err{background:#fbeceb;color:var(--danger);font-size:13px;padding:10px 12px;border-radius:9px;margin-bottom:14px}
 .cfg{background:#fff7e6;border:1px solid #f5d98a;color:#7a5300;font-size:13px;padding:14px 16px;border-radius:12px;margin:8vh auto 0;max-width:560px}
 .cfg code{background:#fff;border:1px solid #eadfae;padding:1px 6px;border-radius:5px;font-family:"IBM Plex Mono",monospace;font-size:12px}
@@ -232,6 +253,9 @@ tbody tr:last-child td{border-bottom:none}
     <div class="field"><label>Password</label><input id="liPass" type="password" autocomplete="current-password" /></div>
     <button class="btn primary" id="liBtn" style="width:100%">Sign in</button>
   </div>
+  <div class="powered">
+    <span class="pdot"></span> Powered by <strong>Piercy&nbsp;Software</strong>
+  </div>
 </div>
 
 <!-- APP -->
@@ -246,6 +270,7 @@ tbody tr:last-child td{border-bottom:none}
         <div class="sync"><span class="dot" id="syncDot"></span><span id="syncTxt">Connecting…</span></div>
         <button class="pill ghost" onclick="openBuilds()">🚑 Units</button>
         <button class="pill ghost" onclick="openSuppliers()">🏢 Suppliers</button>
+        <button class="pill ghost" onclick="toggleDark()" id="darkBtn" title="Toggle dark mode">🌙</button>
         <button class="pill ghost" onclick="signOut()">Sign out</button>
         <button class="pill amber" onclick="openOrder()">＋ New Order</button>
       </div>
@@ -1078,6 +1103,16 @@ async function signIn(){
 }
 async function signOut(){ await sb.auth.signOut(); location.reload(); }
 
+function applyDark(on){
+  document.body.classList.toggle('dark', on);
+  const b=el('darkBtn'); if(b) b.textContent = on ? '☀️' : '🌙';
+}
+function toggleDark(){
+  const on = !document.body.classList.contains('dark');
+  localStorage.setItem('pmc_dark', on ? '1' : '0');
+  applyDark(on);
+}
+
 function showApp(session){
   el('loginView').classList.add('hide');
   el('appView').classList.remove('hide');
@@ -1089,10 +1124,12 @@ function showLogin(){
   el('loginView').classList.remove('hide');
   el('loginLogo').innerHTML=LOGO_SVG;
   el('loginCust').textContent = CUSTOMER_NAME;
+  applyDark(localStorage.getItem('pmc_dark')==='1');
 }
 
 async function boot(){
   el('hdrLogo').innerHTML=LOGO_SVG;
+  applyDark(localStorage.getItem('pmc_dark')==='1');
   el('hdrCust').textContent = 'Order Tracker · ' + CUSTOMER_NAME;
   if(!SUPABASE_URL || SUPABASE_URL.includes('YOUR_')){ el('cfgBanner').classList.remove('hide'); return; }
   sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1107,8 +1144,9 @@ async function boot(){
    ⬇⬇⬇  PASTE YOUR SUPABASE CREDENTIALS HERE  ⬇⬇⬇
    Supabase dashboard → Project Settings → API
    ====================================================================== */
-const SUPABASE_URL      = "https://dhnowfdvtxlbcdvnobzz.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobm93ZmR2dHhsYmNkdm5vYnp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0ODE4MTIsImV4cCI6MjEwMjA1NzgxMn0.J_mDKl8pwqgeK626XBuQFAdDu25qHJLUOVzvuJmFpxI";
+const SUPABASE_URL      = "https://dhnowfdvtxlbcdvnobzz.supabase.co";      // e.g. https://abcdxyz.supabase.co
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobm93ZmR2dHhsYmNkdm5vYnp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0ODE4MTIsImV4cCI6MjEwMjA1NzgxMn0.J_mDKl8pwqgeK626XBuQFAdDu25qHJLUOVzvuJmFpxI";  // the "anon / public" key (safe for the browser)
+
 /* Customer name — shows under the Piercy Software logo and on printed POs.
    Change this one line for each customer you set up. */
 const CUSTOMER_NAME = "Promedic Ambulance Upfitters";
