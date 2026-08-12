@@ -8,6 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <style>
 :root{
   --navy:#0E2038; --navy-2:#16304f; --bg:#eef1f6; --surface:#ffffff;
@@ -771,7 +773,10 @@ function viewOrder(id){
       <div id="attList"><div class="sub">Loading…</div></div>
     </div>
     <div class="mfoot">
-      <button class="btn sub" onclick="printPO('${o.id}')">🖨 Print PO</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="downloadPO('${o.id}')">⬇ PDF</button>
+        <button class="btn sub" onclick="emailPO('${o.id}')">✉ Email PO</button>
+      </div>
       <div style="display:flex;gap:8px">
         ${next?`<button class="btn ok" onclick="advance('${o.id}','${next.key}')">→ ${next.label}</button>`:''}
         <button class="btn primary" onclick="openOrder(state.orders.find(x=>x.id==='${o.id}'))">✏ Edit</button>
@@ -830,14 +835,15 @@ function openSuppliers(){
     <div class="mbody">
       <div class="grid2">
         <div class="field"><label>Name</label><input id="supName" placeholder="Supplier name"/></div>
-        <div class="field"><label>Phone</label><input id="supPhone"/></div>
+        <div class="field"><label>Our account # with them</label><input id="supAcct" placeholder="e.g. 48213 (optional)"/></div>
       </div>
       <div class="grid2">
         <div class="field"><label>Contact</label><input id="supContact"/></div>
-        <div class="field"><label>Email</label><input id="supEmail"/></div>
+        <div class="field"><label>Email</label><input id="supEmail" placeholder="orders@supplier.com"/></div>
       </div>
+      <div class="field"><label>Phone</label><input id="supPhone"/></div>
       <button class="btn primary" onclick="addSupplier()">＋ Add supplier</button>
-      <div class="section-lb">Current</div>
+      <div class="section-lb">Current <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">tap one to edit</span></div>
       <div id="supList"></div>
     </div>
     <div class="mfoot"><span></span><button class="btn sub" onclick="closeModal()">Done</button></div>`);
@@ -845,18 +851,50 @@ function openSuppliers(){
 }
 function renderSupList(){
   const box=el('supList'); if(!box)return;
-  box.innerHTML = state.suppliers.length? state.suppliers.map(s=>`<div class="att">
-    <span><strong>${esc(s.name)}</strong>${s.phone?' · '+esc(s.phone):''}${s.contact?' · '+esc(s.contact):''}</span>
-    <button class="adel" onclick="delSupplier('${s.id}')">✕</button></div>`).join('') : '<div class="sub">None yet.</div>';
+  box.innerHTML = state.suppliers.length? state.suppliers.map(s=>`<div class="att" style="cursor:pointer" onclick="editSupplier('${s.id}')">
+    <span><strong>${esc(s.name)}</strong>${s.customer_number?` <span class="sub">· acct ${esc(s.customer_number)}</span>`:''}${s.email?' · '+esc(s.email):''}</span>
+    <button class="adel" onclick="event.stopPropagation();delSupplier('${s.id}')">✕</button></div>`).join('') : '<div class="sub">None yet.</div>';
 }
 async function addSupplier(){
   const name=el('supName').value.trim(); if(!name){toast('Name required');return;}
   const {error}=await sb.from('suppliers').insert({name,phone:el('supPhone').value.trim()||null,
-    contact:el('supContact').value.trim()||null,email:el('supEmail').value.trim()||null});
+    contact:el('supContact').value.trim()||null,email:el('supEmail').value.trim()||null,
+    customer_number:el('supAcct').value.trim()||null});
   if(error){toast('Failed: '+error.message);return;}
-  el('supName').value=el('supPhone').value=el('supContact').value=el('supEmail').value='';
+  el('supName').value=el('supPhone').value=el('supContact').value=el('supEmail').value=el('supAcct').value='';
   const {data}=await sb.from('suppliers').select('*').order('name'); state.suppliers=data||[];
   renderSupList(); toast('Supplier added');
+}
+function editSupplier(id){
+  const s=state.suppliers.find(x=>x.id===id); if(!s) return;
+  modal(`<div class="mhead"><h2>Edit Supplier</h2><button class="x" onclick="openSuppliers()">✕</button></div>
+    <div class="mbody">
+      <div class="field"><label>Name</label><input id="esName" value="${esc(s.name||'')}"/></div>
+      <div class="grid2">
+        <div class="field"><label>Our account # with them</label><input id="esAcct" value="${esc(s.customer_number||'')}" placeholder="prints on their PO"/></div>
+        <div class="field"><label>Phone</label><input id="esPhone" value="${esc(s.phone||'')}"/></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Contact</label><input id="esContact" value="${esc(s.contact||'')}"/></div>
+        <div class="field"><label>Email</label><input id="esEmail" value="${esc(s.email||'')}" placeholder="orders@supplier.com"/></div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn warn" onclick="delSupplier('${s.id}')">Delete</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="openSuppliers()">Back</button>
+        <button class="btn primary" onclick="saveSupplier('${s.id}')">Save</button>
+      </div>
+    </div>`);
+}
+async function saveSupplier(id){
+  const rec={name:el('esName').value.trim(),customer_number:el('esAcct').value.trim()||null,
+    phone:el('esPhone').value.trim()||null,contact:el('esContact').value.trim()||null,email:el('esEmail').value.trim()||null};
+  if(!rec.name){toast('Name required');return;}
+  const {error}=await sb.from('suppliers').update(rec).eq('id',id);
+  if(error){toast('Save failed: '+error.message);return;}
+  const {data}=await sb.from('suppliers').select('*').order('name'); state.suppliers=data||[];
+  toast('Supplier updated'); render(); openSuppliers();
 }
 async function delSupplier(id){
   if(!confirm('Remove supplier?'))return;
@@ -945,27 +983,90 @@ function exportCSV(){
 }
 
 /* ---------- Print PO ---------- */
-function printPO(id){
-  const o=state.orders.find(x=>x.id===id); if(!o)return; const t=orderTotals(o);
-  const items=(o.items||[]).map(i=>`<tr><td>${esc(i.sku||'')}</td><td>${esc(i.description||'')}</td>
-    <td style="text-align:center">${i.qty}</td><td style="text-align:right">${money(i.unit_price)}</td>
-    <td style="text-align:right">${money((Number(i.qty)||0)*(Number(i.unit_price)||0))}</td></tr>`).join('');
-  const w=window.open('','_blank');
-  w.document.write(`<html><head><title>PO ${esc(o.po_number||'')}</title>
-    <style>body{font-family:Arial,sans-serif;padding:40px;color:#122036}h1{margin:0}
-    .h{display:flex;justify-content:space-between;border-bottom:3px solid #0E2038;padding-bottom:14px;margin-bottom:20px}
-    .meta div{margin:3px 0;font-size:14px}table{width:100%;border-collapse:collapse;margin-top:16px}
-    th{background:#0E2038;color:#fff;padding:8px;text-align:left;font-size:12px}
-    td{padding:8px;border-bottom:1px solid #ddd;font-size:13px}.tot{text-align:right;font-size:16px;font-weight:bold;margin-top:14px}</style></head>
-    <body><div class="h"><div><h1>${esc(CUSTOMER_NAME)}</h1><div style="color:#5b6b82">Purchase Order</div></div>
-    <div class="meta" style="text-align:right"><div><b>PO:</b> ${esc(o.po_number||'—')}</div>
-    <div><b>Date:</b> ${fmtDate(o.order_date)}</div><div><b>Supplier:</b> ${esc(o.supplier?.name||'—')}</div>
-    ${o.build?.name?`<div><b>Unit:</b> ${esc(o.build.name)}</div>`:''}</div></div>
-    <table><thead><tr><th>SKU</th><th>Description</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead>
-    <tbody>${items||'<tr><td colspan=5>No items</td></tr>'}</tbody></table>
-    <div class="tot">Estimated Total: ${money(t.est)}</div>
-    ${o.notes?`<p style="margin-top:20px;font-size:13px"><b>Notes:</b> ${esc(o.notes)}</p>`:''}</body></html>`);
-  w.document.close(); w.focus(); setTimeout(()=>w.print(),300);
+/* ---------- PDF Purchase Order ---------- */
+function buildPO(id){
+  const o = state.orders.find(x=>x.id===id); if(!o) return null;
+  const sup = state.suppliers.find(s=>s.id===o.supplier_id) || {};
+  const t = orderTotals(o);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'letter' });
+  const navy=[14,32,56], amber=[240,165,0], muted=[91,107,130];
+  const M=48; let y=54;
+
+  // Header band
+  doc.setFillColor(...navy); doc.rect(0,0,doc.internal.pageSize.getWidth(),4,'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.setTextColor(...navy);
+  doc.text(CUSTOMER_NAME, M, y);
+  doc.setFontSize(11); doc.setTextColor(...muted); doc.setFont('helvetica','normal');
+  doc.text('Purchase Order', M, y+16);
+  // amber rule
+  doc.setDrawColor(...amber); doc.setLineWidth(2); doc.line(M, y+26, doc.internal.pageSize.getWidth()-M, y+26);
+
+  // Meta (right side)
+  const RX = doc.internal.pageSize.getWidth()-M;
+  doc.setFontSize(10); let my=y-8;
+  const metaLine=(label,valLabelBold)=>{ doc.setTextColor(...muted); doc.setFont('helvetica','normal');
+    doc.text(label, RX-170, my); doc.setTextColor(...navy); doc.setFont('helvetica','bold');
+    doc.text(String(valLabelBold||'—'), RX, my, {align:'right'}); my+=15; };
+  metaLine('PO #', o.po_number||'—');
+  metaLine('Date', fmtDate(o.order_date));
+  if (sup.customer_number) metaLine('Our Account #', sup.customer_number);
+  if (o.build?.name) metaLine('Unit / Build', o.build.name);
+
+  y += 48;
+  // Supplier block
+  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...muted);
+  doc.text('SUPPLIER', M, y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(12); doc.setTextColor(...navy);
+  doc.text(sup.name || o.supplier?.name || '—', M, y+16);
+  doc.setFontSize(10); doc.setTextColor(...muted); let sy=y+31;
+  if (sup.contact){ doc.text('Attn: '+sup.contact, M, sy); sy+=13; }
+  if (sup.email){ doc.text(sup.email, M, sy); sy+=13; }
+  if (sup.phone){ doc.text(sup.phone, M, sy); sy+=13; }
+  y = Math.max(sy, y+40) + 6;
+
+  // Items table
+  const rows = (o.items||[]).map(i=>[
+    i.sku||'', i.description||'',
+    String(i.qty||0), money(i.unit_price), money((Number(i.qty)||0)*(Number(i.unit_price)||0))
+  ]);
+  doc.autoTable({
+    startY: y,
+    head: [['SKU','Description','Qty','Unit','Total']],
+    body: rows.length?rows:[['','No items','','','']],
+    theme:'grid',
+    headStyles:{ fillColor:navy, textColor:255, fontStyle:'bold', fontSize:9 },
+    bodyStyles:{ fontSize:9, textColor:[30,40,60] },
+    columnStyles:{ 2:{halign:'center',cellWidth:44}, 3:{halign:'right',cellWidth:64}, 4:{halign:'right',cellWidth:70} },
+    margin:{ left:M, right:M },
+  });
+  let ey = doc.lastAutoTable.finalY + 16;
+  doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...navy);
+  doc.text('Estimated Total:  '+money(t.est), RX, ey, {align:'right'});
+
+  if (o.notes){ ey+=24; doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...muted);
+    doc.text('NOTES', M, ey); doc.setFont('helvetica','normal'); doc.setTextColor(30,40,60);
+    doc.text(doc.splitTextToSize(o.notes, doc.internal.pageSize.getWidth()-M*2), M, ey+13); }
+
+  // Footer credit
+  doc.setFontSize(8); doc.setTextColor(...muted);
+  doc.text('Prepared with Piercy Software', M, doc.internal.pageSize.getHeight()-28);
+
+  return { doc, o, sup, filename:`PO_${(o.po_number||o.id.slice(0,6)).replace(/[^\w.\-]/g,'_')}.pdf` };
+}
+function downloadPO(id){
+  const r = buildPO(id); if(!r){ toast('Could not build PO'); return; }
+  r.doc.save(r.filename); toast('PDF downloaded');
+}
+function emailPO(id){
+  const r = buildPO(id); if(!r){ toast('Could not build PO'); return; }
+  r.doc.save(r.filename); // download first so it's ready to attach
+  const to = r.sup.email || '';
+  const subj = `Purchase Order ${r.o.po_number||''} — ${CUSTOMER_NAME}`.trim();
+  const acct = r.sup.customer_number ? `\nOur account #: ${r.sup.customer_number}` : '';
+  const body = `Hello${r.sup.contact?' '+r.sup.contact:''},\n\nPlease find our purchase order ${r.o.po_number||''} attached (PDF just downloaded — attach it to this email).${acct}\n\nThank you,\n${CUSTOMER_NAME}`;
+  window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+  toast('PDF downloaded — attach it to the email draft');
 }
 
 /* ====================== AUTH / BOOT ====================== */
@@ -1006,8 +1107,8 @@ async function boot(){
    ⬇⬇⬇  PASTE YOUR SUPABASE CREDENTIALS HERE  ⬇⬇⬇
    Supabase dashboard → Project Settings → API
    ====================================================================== */
-const SUPABASE_URL      = "https://dhnowfdvtxlbcdvnobzz.supabase.co";      // e.g. https://abcdxyz.supabase.co
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobm93ZmR2dHhsYmNkdm5vYnp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0ODE4MTIsImV4cCI6MjEwMjA1NzgxMn0.J_mDKl8pwqgeK626XBuQFAdDu25qHJLUOVzvuJmFpxI";  // the "anon / public" key (safe for the browser)
+const SUPABASE_URL      = "YOUR_PROJECT_URL";      // e.g. https://abcdxyz.supabase.co
+const SUPABASE_ANON_KEY = "YOUR_ANON_PUBLIC_KEY";  // the "anon / public" key (safe for the browser)
 
 /* Customer name — shows under the Piercy Software logo and on printed POs.
    Change this one line for each customer you set up. */
