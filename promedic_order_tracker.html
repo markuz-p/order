@@ -1102,42 +1102,60 @@ function buildPO(id){
   const t = orderTotals(o);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'pt', format:'letter' });
-  const navy=[14,32,56], amber=[240,165,0], muted=[91,107,130];
-  const M=48; let y=54;
 
-  // Header band
-  doc.setFillColor(...navy); doc.rect(0,0,doc.internal.pageSize.getWidth(),4,'F');
-  doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.setTextColor(...navy);
-  doc.text(CUSTOMER_NAME, M, y);
-  doc.setFontSize(11); doc.setTextColor(...muted); doc.setFont('helvetica','normal');
-  doc.text('Purchase Order', M, y+16);
-  // amber rule
-  doc.setDrawColor(...amber); doc.setLineWidth(2); doc.line(M, y+26, doc.internal.pageSize.getWidth()-M, y+26);
+  // Palette drawn from the official template
+  const blue=[31,111,178];     // #1f6fb2
+  const red=[193,32,43];       // #c1202b
+  const navy=[35,80,127];      // #23507f  (serif "PO" + headings)
+  const dark=[22,24,29];       // #16181d  (total bar)
+  const ink=[45,55,72];        // body text
+  const muted=[120,132,150];   // labels
+  const line=[228,231,236];    // #e4e7ec  hairlines
+  const PW = doc.internal.pageSize.getWidth();
+  const PH = doc.internal.pageSize.getHeight();
+  const M=48;
+  const RX = PW - M;
 
-  // Meta (right side)
-  const RX = doc.internal.pageSize.getWidth()-M;
-  doc.setFontSize(10); let my=y-8;
-  const metaLine=(label,valLabelBold)=>{ doc.setTextColor(...muted); doc.setFont('helvetica','normal');
-    doc.text(label, RX-170, my); doc.setTextColor(...navy); doc.setFont('helvetica','bold');
-    doc.text(String(valLabelBold||'—'), RX, my, {align:'right'}); my+=15; };
+  // ---- Top split header bar: blue left half, red right half ----
+  doc.setFillColor(...blue); doc.rect(0,0,PW/2,12,'F');
+  doc.setFillColor(...red);  doc.rect(PW/2,0,PW/2,12,'F');
+
+  // ---- Masthead: serif "PO" + customer name ----
+  let y=64;
+  doc.setFont('times','bold'); doc.setFontSize(46); doc.setTextColor(...navy);
+  doc.setCharSpace(3); doc.text('PO', M, y); doc.setCharSpace(0);
+  doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.setTextColor(...ink);
+  doc.text(CUSTOMER_NAME, M, y+22);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...muted);
+  doc.text('Purchase Order', M, y+37);
+
+  // ---- Meta block (right) ----
+  let my=44;
+  const metaLine=(label,val)=>{ doc.setFontSize(9); doc.setTextColor(...muted); doc.setFont('helvetica','normal');
+    doc.text(label.toUpperCase(), RX-190, my); doc.setTextColor(...navy); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text(String(val||'—'), RX, my, {align:'right'}); my+=17; };
   metaLine('PO #', o.po_number||'—');
   metaLine('Date', fmtDate(o.order_date));
   if (sup.customer_number) metaLine('Our Account #', sup.customer_number);
   if (o.build?.name) metaLine('Unit / Build', o.build.name);
 
-  y += 48;
-  // Supplier block
-  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...muted);
+  // hairline under masthead
+  y += 52;
+  doc.setDrawColor(...line); doc.setLineWidth(1); doc.line(M, y, RX, y);
+
+  // ---- Supplier block ----
+  y += 22;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...red);
   doc.text('SUPPLIER', M, y);
-  doc.setFont('helvetica','normal'); doc.setFontSize(12); doc.setTextColor(...navy);
-  doc.text(sup.name || o.supplier?.name || '—', M, y+16);
-  doc.setFontSize(10); doc.setTextColor(...muted); let sy=y+31;
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...navy);
+  doc.text(sup.name || o.supplier?.name || '—', M, y+17);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...muted); let sy=y+32;
   if (sup.contact){ doc.text('Attn: '+sup.contact, M, sy); sy+=13; }
   if (sup.email){ doc.text(sup.email, M, sy); sy+=13; }
   if (sup.phone){ doc.text(sup.phone, M, sy); sy+=13; }
-  y = Math.max(sy, y+40) + 6;
+  y = Math.max(sy, y+44) + 8;
 
-  // Items table
+  // ---- Items table ----
   const rows = (o.items||[]).map(i=>[
     i.sku||'', i.description||'',
     String(i.qty||0), money(i.unit_price), money((Number(i.qty)||0)*(Number(i.unit_price)||0))
@@ -1146,23 +1164,35 @@ function buildPO(id){
     startY: y,
     head: [['SKU','Description','Qty','Unit','Total']],
     body: rows.length?rows:[['','No items','','','']],
-    theme:'grid',
-    headStyles:{ fillColor:navy, textColor:255, fontStyle:'bold', fontSize:9 },
-    bodyStyles:{ fontSize:9, textColor:[30,40,60] },
-    columnStyles:{ 2:{halign:'center',cellWidth:44}, 3:{halign:'right',cellWidth:64}, 4:{halign:'right',cellWidth:70} },
+    theme:'plain',
+    headStyles:{ fillColor:blue, textColor:255, fontStyle:'bold', fontSize:9, cellPadding:{top:6,bottom:6,left:6,right:6} },
+    bodyStyles:{ fontSize:9, textColor:ink, cellPadding:{top:5,bottom:5,left:6,right:6} },
+    alternateRowStyles:{ fillColor:[247,249,251] },
+    columnStyles:{ 2:{halign:'center',cellWidth:44}, 3:{halign:'right',cellWidth:64}, 4:{halign:'right',cellWidth:72} },
     margin:{ left:M, right:M },
   });
-  let ey = doc.lastAutoTable.finalY + 16;
-  doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...navy);
-  doc.text('Estimated Total:  '+money(t.est), RX, ey, {align:'right'});
 
-  if (o.notes){ ey+=24; doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...muted);
-    doc.text('NOTES', M, ey); doc.setFont('helvetica','normal'); doc.setTextColor(30,40,60);
-    doc.text(doc.splitTextToSize(o.notes, doc.internal.pageSize.getWidth()-M*2), M, ey+13); }
+  // ---- Total bar (dark button-style from template) ----
+  let ey = doc.lastAutoTable.finalY + 14;
+  const barW=230, barH=30, barX=RX-barW;
+  doc.setFillColor(...dark); doc.roundedRect(barX, ey, barW, barH, 5, 5, 'F');
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(210,214,222);
+  doc.text('ESTIMATED TOTAL', barX+14, ey+19);
+  doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.setTextColor(255,255,255);
+  doc.text(money(t.est), barX+barW-14, ey+20, {align:'right'});
+  ey += barH;
 
-  // Footer credit
-  doc.setFontSize(8); doc.setTextColor(...muted);
-  doc.text('Prepared with Piercy Software', M, doc.internal.pageSize.getHeight()-28);
+  if (o.notes){ ey+=26; doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...red);
+    doc.text('NOTES', M, ey); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...ink);
+    doc.text(doc.splitTextToSize(o.notes, PW-M*2), M, ey+13); }
+
+  // ---- Footer: blue/red accent + Powered by Piercy Software ----
+  const fy = PH-40;
+  doc.setDrawColor(...line); doc.setLineWidth(1); doc.line(M, fy-14, RX, fy-14);
+  doc.setFillColor(...blue); doc.rect(M, fy-4, 20, 4, 'F');
+  doc.setFillColor(...red);  doc.rect(M+20, fy-4, 20, 4, 'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...muted);
+  doc.text('Powered by Piercy Software', RX, fy-1, {align:'right'});
 
   return { doc, o, sup, filename:`PO_${(o.po_number||o.id.slice(0,6)).replace(/[^\w.\-]/g,'_')}.pdf` };
 }
