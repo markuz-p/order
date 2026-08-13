@@ -270,6 +270,7 @@ tbody tr:last-child td{border-bottom:none}
         <div class="sync"><span class="dot" id="syncDot"></span><span id="syncTxt">Connecting…</span></div>
         <button class="pill ghost" onclick="openBuilds()">🚑 Units</button>
         <button class="pill ghost" onclick="openSuppliers()">🏢 Suppliers</button>
+        <button class="pill ghost" onclick="window.open('https://mail.google.com/','_blank')" title="Open Gmail">✉ Gmail</button>
         <button class="pill ghost" onclick="toggleDark()" id="darkBtn" title="Toggle dark mode">🌙</button>
         <button class="pill ghost" onclick="signOut()">Sign out</button>
         <button class="pill amber" onclick="openOrder()">＋ New Order</button>
@@ -317,6 +318,7 @@ tbody tr:last-child td{border-bottom:none}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
           <input id="partSearch" placeholder="Search parts by name, SKU, category…" oninput="renderParts()" />
         </div>
+        <button class="pill ghost" onclick="openBulkParts()" style="color:var(--ink)">⇪ Bulk Add</button>
         <button class="pill amber" onclick="openPart()" style="color:#3a2800">＋ Add Part</button>
       </div>
       <div class="parts-grid" id="partsGrid"></div>
@@ -658,6 +660,91 @@ function pickPart(id){
   closePartPicker();
 }
 function closePartPicker(){ el('pickerRoot').innerHTML=''; }
+
+/* ---------- Bulk add: paste rows + batch photos by filename ---------- */
+function parseMoney(v){ if(v==null) return null; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
+function parseBulk(text){
+  return text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).map(line=>{
+    const cols = line.includes('\t') ? line.split('\t') : line.split(',');
+    const [description,sku,category,supplier,cost] = cols.map(c=>(c||'').trim());
+    return { description, sku, category, supplier, cost:parseMoney(cost) };
+  }).filter(r=>r.description);
+}
+function openBulkParts(){
+  modal(`
+    <div class="mhead"><h2>Bulk Add Parts</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="section-lb" style="border-top:none;padding-top:0;margin-top:0">Step 1 · Paste part info</div>
+      <p class="sub" style="margin-top:0">In your spreadsheet, put columns in this order, then copy the rows and paste below:</p>
+      <p class="sub" style="font-family:'IBM Plex Mono',monospace;background:#eef2f8;padding:8px 10px;border-radius:8px;color:var(--ink)">Description &nbsp;|&nbsp; SKU &nbsp;|&nbsp; Category &nbsp;|&nbsp; Supplier &nbsp;|&nbsp; Cost</p>
+      <button class="linkbtn" onclick="downloadPartTemplate()">⬇ Download a blank spreadsheet template</button>
+      <textarea id="bulkText" style="width:100%;min-height:120px;margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:10px;border:1px solid var(--line);border-radius:9px" placeholder="900 Super LED Scene Light	9SC0ENZR	Lights & Warning	Whelen	222.09"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn sub" onclick="previewBulk()">Preview</button>
+        <button class="btn primary" onclick="importBulk()">Import parts</button>
+      </div>
+      <div id="bulkPreview" class="sub" style="margin-top:10px"></div>
+
+      <div class="section-lb">Step 2 · Add photos in bulk <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">optional</span></div>
+      <p class="sub" style="margin-top:0">Name each photo file by its <strong>SKU</strong> (e.g. <code>9SC0ENZR.jpg</code>), then select them all at once. Each photo attaches to the part with the matching SKU.</p>
+      <input id="bulkPhotos" type="file" accept="image/*" multiple style="font-size:13px" onchange="bulkPhotoUpload()" />
+      <div id="bulkPhotoLog" class="sub" style="margin-top:10px;max-height:180px;overflow-y:auto"></div>
+    </div>
+    <div class="mfoot"><span></span><button class="btn sub" onclick="closeModal()">Done</button></div>`);
+}
+function downloadPartTemplate(){
+  const csv = 'Description,SKU,Category,Supplier,Cost\n"900 Super LED Scene Light",9SC0ENZR,Lights & Warning,Whelen,222.09\n';
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='parts_template.csv'; a.click();
+}
+function previewBulk(){
+  const rows=parseBulk(el('bulkText').value);
+  if(!rows.length){ el('bulkPreview').innerHTML='<span style="color:var(--danger)">No rows found — paste your parts above.</span>'; return; }
+  const show=rows.slice(0,5).map(r=>`• ${esc(r.description)} <span class="mono">${esc(r.sku||'')}</span> ${r.cost!=null?money(r.cost):''}`).join('<br>');
+  el('bulkPreview').innerHTML = `Found <strong>${rows.length}</strong> part${rows.length>1?'s':''}. First few:<br>${show}${rows.length>5?'<br>…':''}`;
+}
+async function importBulk(){
+  const rows=parseBulk(el('bulkText').value);
+  if(!rows.length){ toast('Nothing to import — paste your parts first'); return; }
+  el('bulkPreview').innerHTML='Importing…';
+  // make sure suppliers exist
+  const map={}; state.suppliers.forEach(s=>map[(s.name||'').toLowerCase()]=s.id);
+  const needed=[...new Set(rows.map(r=>(r.supplier||'').trim()).filter(Boolean))].filter(n=>!map[n.toLowerCase()]);
+  if(needed.length){
+    const ins=await sb.from('suppliers').insert(needed.map(name=>({name})));
+    if(ins.error){ el('bulkPreview').innerHTML='<span style="color:var(--danger)">Supplier error: '+esc(ins.error.message)+'</span>'; return; }
+    const {data}=await sb.from('suppliers').select('id,name'); (data||[]).forEach(s=>map[(s.name||'').toLowerCase()]=s.id);
+  }
+  const recs=rows.map(r=>({description:r.description,sku:r.sku||null,category:r.category||null,
+    supplier_id:map[(r.supplier||'').toLowerCase()]||null,cost:r.cost}));
+  const ins=await sb.from('parts').insert(recs);
+  if(ins.error){ el('bulkPreview').innerHTML='<span style="color:var(--danger)">Import failed: '+esc(ins.error.message)+'</span>'; return; }
+  el('bulkText').value='';
+  el('bulkPreview').innerHTML=`<span style="color:var(--ok)">✓ Imported ${recs.length} parts. Now add photos below, or close.</span>`;
+  toast(`Imported ${recs.length} parts`);
+  await loadAll();
+}
+async function bulkPhotoUpload(){
+  const files=[...el('bulkPhotos').files]; if(!files.length) return;
+  const logBox=el('bulkPhotoLog'); logBox.innerHTML='';
+  const bySku={}; state.parts.forEach(p=>{ if(p.sku) bySku[p.sku.toLowerCase().trim()]=p; });
+  let matched=0, missed=0;
+  for(const f of files){
+    const base=f.name.replace(/\.[^.]+$/,'').toLowerCase().trim();
+    const part=bySku[base];
+    if(!part){ missed++; logBox.innerHTML += `<div>✕ ${esc(f.name)} — no part with that SKU</div>`; continue; }
+    const path=`parts/${Date.now()}_${f.name.replace(/[^\w.\-]/g,'_')}`;
+    const up=await sb.storage.from('part-photos').upload(path,f,{upsert:true});
+    if(up.error){ logBox.innerHTML += `<div style="color:var(--danger)">✕ ${esc(f.name)} — ${esc(up.error.message)}</div>`; continue; }
+    const upd=await sb.from('parts').update({photo_path:path}).eq('id',part.id);
+    if(upd.error){ logBox.innerHTML += `<div style="color:var(--danger)">✕ ${esc(f.name)} — save failed</div>`; continue; }
+    matched++; logBox.innerHTML += `<div style="color:var(--ok)">✓ ${esc(f.name)} → ${esc(part.description)}</div>`;
+    logBox.scrollTop=logBox.scrollHeight;
+  }
+  el('bulkPhotos').value='';
+  toast(`${matched} photo${matched===1?'':'s'} attached${missed?`, ${missed} unmatched`:''}`);
+  await loadAll();
+}
 
 
 /* ====================== MODALS ====================== */
