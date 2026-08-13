@@ -236,12 +236,6 @@ tbody tr:last-child td{border-bottom:none}
 </head>
 <body>
 
-<!-- CONFIG BANNER -->
-<div id="cfgBanner" class="cfg hide">
-  <strong>One step to go.</strong> Open this file and paste your Supabase project URL and anon key into the
-  <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> values near the bottom of the script, then reload.
-</div>
-
 <!-- LOGIN -->
 <div id="loginView" class="login-wrap hide">
   <div class="login-card">
@@ -252,6 +246,35 @@ tbody tr:last-child td{border-bottom:none}
     <div class="field"><label>Email</label><input id="liEmail" type="email" autocomplete="username" /></div>
     <div class="field"><label>Password</label><input id="liPass" type="password" autocomplete="current-password" /></div>
     <button class="btn primary" id="liBtn" style="width:100%">Sign in</button>
+  </div>
+  <div class="powered">
+    <span class="pdot"></span> Powered by <strong>Piercy&nbsp;Software</strong>
+  </div>
+  <div style="text-align:center;margin-top:10px">
+    <a href="#" onclick="showSetup();return false" style="font-size:12px;color:#8794a8;text-decoration:none">⚙ Connection settings</a>
+  </div>
+</div>
+
+<!-- FIRST-RUN SETUP -->
+<div id="setupView" class="login-wrap hide">
+  <div class="login-card">
+    <div class="logo" id="setupLogo"></div>
+    <h2>One-time setup</h2>
+    <p>Connect this app to your Supabase project. You only do this once on this device.</p>
+    <div id="setupErr" class="err hide"></div>
+    <div class="field">
+      <label>Project URL</label>
+      <input id="setUrl" type="text" placeholder="https://abcdxyz.supabase.co" spellcheck="false" autocapitalize="off" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label>Anon / public key</label>
+      <input id="setKey" type="text" placeholder="eyJhbGciOi… (the long anon/public key)" spellcheck="false" autocapitalize="off" autocomplete="off" />
+    </div>
+    <button class="btn primary" id="setBtn" style="width:100%" onclick="saveSetup()">Save &amp; continue</button>
+    <p style="font-size:12px;color:#8794a8;margin-top:14px;line-height:1.5">
+      Find both in Supabase → your project → <strong>Project Settings → API</strong>.
+      Copy the <strong>Project URL</strong> and the <strong>anon / public</strong> key (not the service_role key).
+    </p>
   </div>
   <div class="powered">
     <span class="pdot"></span> Powered by <strong>Piercy&nbsp;Software</strong>
@@ -272,6 +295,7 @@ tbody tr:last-child td{border-bottom:none}
         <button class="pill ghost" onclick="openSuppliers()">🏢 Suppliers</button>
         <button class="pill ghost" onclick="window.open('https://mail.google.com/','_blank')" title="Open Gmail">✉ Gmail</button>
         <button class="pill ghost" onclick="toggleDark()" id="darkBtn" title="Toggle dark mode">🌙</button>
+        <button class="pill ghost" onclick="openSettings()" title="Company settings">⚙ Settings</button>
         <button class="pill ghost" onclick="signOut()">Sign out</button>
         <button class="pill amber" onclick="openOrder()">＋ New Order</button>
       </div>
@@ -1015,6 +1039,76 @@ async function delSupplier(id){
   renderSupList(); render();
 }
 
+/* ---------- Company Settings (branding) ---------- */
+function openSettings(){
+  const [lw,lh]=brandLogoWH();
+  modal(`<div class="mhead"><h2>Company Settings</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <p class="sub" style="margin-top:0">These appear on the app header, the login screen, and your printed POs. Saved for everyone on this account.</p>
+      <div class="field"><label>Customer / company name</label><input id="stName" value="${esc(brandName())}" placeholder="e.g. Promedic Ambulance Upfitters"/></div>
+      <div class="field"><label>Ship-to address (for POs)</label><textarea id="stShip" rows="3" placeholder="712 Hwy 82 W&#10;Greenwood, MS 38930">${esc(brandShipTo())}</textarea></div>
+      <div class="field"><label>Logo (shown on POs)</label>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <img id="stLogoPrev" src="${brandLogo()}" alt="logo" style="max-width:220px;max-height:70px;background:#fff;border:1px solid #e4e7ec;border-radius:8px;padding:6px"/>
+          <div>
+            <input id="stLogoFile" type="file" accept="image/*" onchange="onLogoPick(event)" style="font-size:13px"/>
+            <div class="sub" style="margin-top:6px">PNG or JPG. It's resized automatically.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <span></span>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" id="stSaveBtn" onclick="saveSettings()">Save</button>
+      </div>
+    </div>`);
+  // stash current logo (may be replaced by a pick)
+  el('stLogoPrev').dataset.data = brandLogo();
+  el('stLogoPrev').dataset.w = lw; el('stLogoPrev').dataset.h = lh;
+}
+function onLogoPick(ev){
+  const f = ev.target.files && ev.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 640;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if(w > maxW){ h = Math.round(h*maxW/w); w = maxW; }
+      const cv = document.createElement('canvas'); cv.width=w; cv.height=h;
+      const cx = cv.getContext('2d'); cx.drawImage(img,0,0,w,h);
+      const isPng = /image\/png/i.test(f.type);
+      const data = cv.toDataURL(isPng?'image/png':'image/jpeg', isPng?undefined:0.9);
+      const prev = el('stLogoPrev');
+      prev.src = data; prev.dataset.data = data; prev.dataset.w = w; prev.dataset.h = h;
+    };
+    img.src = rd.result;
+  };
+  rd.readAsDataURL(f);
+}
+async function saveSettings(){
+  const name = el('stName').value.trim();
+  const ship = el('stShip').value.trim();
+  const prev = el('stLogoPrev');
+  const rec = {
+    id:1,
+    customer_name: name || null,
+    ship_to_address: ship || null,
+    logo_data: prev.dataset.data || null,
+    logo_w: Number(prev.dataset.w)||null,
+    logo_h: Number(prev.dataset.h)||null,
+    updated_at: new Date().toISOString()
+  };
+  const btn=el('stSaveBtn'); btn.disabled=true; btn.textContent='Saving…';
+  const {error} = await sb.from('app_settings').upsert(rec,{onConflict:'id'});
+  if(error){ btn.disabled=false; btn.textContent='Save'; toast('Save failed: '+error.message); return; }
+  settings.customer_name=name; settings.ship_to_address=ship;
+  settings.logo_data=prev.dataset.data||''; settings.logo_w=Number(prev.dataset.w)||0; settings.logo_h=Number(prev.dataset.h)||0;
+  applyBranding(); closeModal(); toast('Settings saved');
+}
+
 /* ---------- Builds / Units ---------- */
 function openBuilds(){
   modal(`<div class="mhead"><h2>Units / Builds</h2><button class="x" onclick="closeModal()">✕</button></div>
@@ -1120,9 +1214,12 @@ function buildPO(id){
   let y=64;
   let mastheadBottom = 88;
   try {
-    const logoW = 210;                              // width on page (pt)
-    const logoH = logoW * (PO_LOGO_H/PO_LOGO_W);    // keep aspect
-    doc.addImage(PO_LOGO, 'JPEG', M, 40, logoW, logoH);
+    const [ow,oh] = brandLogoWH();
+    let logoW = 210, logoH = logoW * (oh/ow);   // keep aspect
+    if(logoH > 72){ logoH = 72; logoW = logoH * (ow/oh); }   // cap tall logos
+    const data = brandLogo();
+    const fmt = /^data:image\/png/i.test(data) ? 'PNG' : 'JPEG';
+    doc.addImage(data, fmt, M, 40, logoW, logoH);
     mastheadBottom = 40+logoH;
   } catch(e){ /* if logo fails, fall through to text masthead */ }
   doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(...muted);
@@ -1160,9 +1257,9 @@ function buildPO(id){
   doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...ink);
   doc.text('SHIP TO', SX, blockTop);
   doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...navy);
-  doc.text(CUSTOMER_NAME, SX, blockTop+17);
+  doc.text(brandName(), SX, blockTop+17);
   doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...muted); let ty=blockTop+32;
-  doc.splitTextToSize(SHIP_TO_ADDRESS, PW-M-SX).forEach(ln=>{ doc.text(ln, SX, ty); ty+=13; });
+  doc.splitTextToSize(brandShipTo(), PW-M-SX).forEach(ln=>{ doc.text(ln, SX, ty); ty+=13; });
 
   y = Math.max(sy, ty, blockTop+44) + 8;
 
@@ -1214,9 +1311,9 @@ function emailPO(id){
   const r = buildPO(id); if(!r){ toast('Could not build PO'); return; }
   r.doc.save(r.filename); // download first so it's ready to attach
   const to = r.sup.email || '';
-  const subj = `Purchase Order ${r.o.po_number||''} — ${CUSTOMER_NAME}`.trim();
+  const subj = `Purchase Order ${r.o.po_number||''} — ${brandName()}`.trim();
   const acct = r.sup.customer_number ? `\nOur account #: ${r.sup.customer_number}` : '';
-  const body = `Hello${r.sup.contact?' '+r.sup.contact:''},\n\nPlease find our purchase order ${r.o.po_number||''} attached (PDF just downloaded — attach it to this email).${acct}\n\nThank you,\n${CUSTOMER_NAME}`;
+  const body = `Hello${r.sup.contact?' '+r.sup.contact:''},\n\nPlease find our purchase order ${r.o.po_number||''} attached (PDF just downloaded — attach it to this email).${acct}\n\nThank you,\n${brandName()}`;
   window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
   toast('PDF downloaded — attach it to the email draft');
 }
@@ -1242,24 +1339,89 @@ function toggleDark(){
 
 function showApp(session){
   el('loginView').classList.add('hide');
+  el('setupView').classList.add('hide');
   el('appView').classList.remove('hide');
   el('syncDot').classList.add('on'); el('syncTxt').textContent='Synced';
   loadAll();
 }
 function showLogin(){
   el('appView').classList.add('hide');
+  el('setupView').classList.add('hide');
   el('loginView').classList.remove('hide');
   el('loginLogo').innerHTML=LOGO_SVG;
-  el('loginCust').textContent = CUSTOMER_NAME;
+  el('loginCust').textContent = brandName();
   applyDark(localStorage.getItem('pmc_dark')==='1');
+}
+
+function showSetup(){
+  el('appView').classList.add('hide');
+  el('loginView').classList.add('hide');
+  el('setupView').classList.remove('hide');
+  el('setupLogo').innerHTML=LOGO_SVG;
+  el('setUrl').value = localStorage.getItem('pmc_supa_url') || '';
+  el('setKey').value = localStorage.getItem('pmc_supa_key') || '';
+  applyDark(localStorage.getItem('pmc_dark')==='1');
+}
+function showSetErr(msg){ const e=el('setupErr'); e.textContent=msg; e.classList.remove('hide'); }
+async function saveSetup(){
+  const url = el('setUrl').value.trim().replace(/\/+$/,'');
+  const key = el('setKey').value.trim();
+  el('setupErr').classList.add('hide');
+  if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url))
+    return showSetErr('That URL doesn\'t look right. It should look like https://abcdxyz.supabase.co');
+  if(!key.startsWith('eyJ') || key.length < 100)
+    return showSetErr('That key doesn\'t look right. Paste the long "anon / public" key — it starts with eyJ.');
+  const btn=el('setBtn'); btn.disabled=true; btn.textContent='Checking…';
+  try{
+    const r = await fetch(url+'/rest/v1/', { headers:{ apikey:key } });
+    if(r.status>=500) throw new Error('server');
+  }catch(e){
+    btn.disabled=false; btn.textContent='Save & continue';
+    return showSetErr('Couldn\'t reach that project. Check the URL and your internet, then try again.');
+  }
+  localStorage.setItem('pmc_supa_url', url);
+  localStorage.setItem('pmc_supa_key', key);
+  location.reload();
+}
+
+/* ---------- App settings (customer branding, saved in DB) ---------- */
+let settings = { customer_name:'', ship_to_address:'', logo_data:'', logo_w:0, logo_h:0 };
+
+function brandName(){ return settings.customer_name || CUSTOMER_NAME; }
+function brandShipTo(){ return settings.ship_to_address || SHIP_TO_ADDRESS; }
+function brandLogo(){ return settings.logo_data || PO_LOGO; }
+function brandLogoWH(){
+  return settings.logo_data ? [settings.logo_w||1, settings.logo_h||1] : [PO_LOGO_W, PO_LOGO_H];
+}
+function applyBranding(){
+  const n = brandName();
+  const hc = el('hdrCust'); if(hc) hc.textContent = 'Order Tracker · ' + n;
+  const lc = el('loginCust'); if(lc) lc.textContent = n;
+}
+async function loadSettings(){
+  try{
+    const {data} = await sb.from('app_settings').select('*').eq('id',1).maybeSingle();
+    if(data){
+      settings.customer_name  = data.customer_name || '';
+      settings.ship_to_address= data.ship_to_address || '';
+      settings.logo_data      = data.logo_data || '';
+      settings.logo_w         = data.logo_w || 0;
+      settings.logo_h         = data.logo_h || 0;
+    }
+  }catch(e){ /* table may not exist yet; fall back to baked-in defaults */ }
+  applyBranding();
 }
 
 async function boot(){
   el('hdrLogo').innerHTML=LOGO_SVG;
   applyDark(localStorage.getItem('pmc_dark')==='1');
-  el('hdrCust').textContent = 'Order Tracker · ' + CUSTOMER_NAME;
-  if(!SUPABASE_URL || SUPABASE_URL.includes('YOUR_')){ el('cfgBanner').classList.remove('hide'); return; }
-  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const bakedUrl = (SUPABASE_URL && !SUPABASE_URL.includes('YOUR_')) ? SUPABASE_URL : '';
+  const bakedKey = (SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.includes('YOUR_')) ? SUPABASE_ANON_KEY : '';
+  const url = localStorage.getItem('pmc_supa_url') || bakedUrl;
+  const key = localStorage.getItem('pmc_supa_key') || bakedKey;
+  if(!url || !key){ showSetup(); return; }
+  sb = supabase.createClient(url, key);
+  await loadSettings();
   el('liBtn').addEventListener('click',signIn);
   el('liPass').addEventListener('keydown',e=>{if(e.key==='Enter')signIn();});
   const {data:{session}} = await sb.auth.getSession();
@@ -1268,11 +1430,14 @@ async function boot(){
 }
 
 /* ======================================================================
-   ⬇⬇⬇  PASTE YOUR SUPABASE CREDENTIALS HERE  ⬇⬇⬇
-   Supabase dashboard → Project Settings → API
+   SUPABASE CREDENTIALS
+   You no longer need to edit these. Leave them as-is and the app will
+   show a one-time setup screen on first load where you paste your
+   Project URL and anon key (saved in the browser after that).
+   (Optional: you may still hard-code them below if you prefer.)
    ====================================================================== */
-const SUPABASE_URL      = "https://dhnowfdvtxlbcdvnobzz.supabase.co";      // e.g. https://abcdxyz.supabase.co
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobm93ZmR2dHhsYmNkdm5vYnp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0ODE4MTIsImV4cCI6MjEwMjA1NzgxMn0.J_mDKl8pwqgeK626XBuQFAdDu25qHJLUOVzvuJmFpxI";  // the "anon / public" key (safe for the browser)
+const SUPABASE_URL      = "YOUR_PROJECT_URL";      // leave as-is to use the setup screen
+const SUPABASE_ANON_KEY = "YOUR_ANON_PUBLIC_KEY";  // leave as-is to use the setup screen
 
 /* Customer name — shows under the Piercy Software logo and on printed POs.
    Change this one line for each customer you set up. */
