@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Promedic — Order Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<style>
+:root{
+  --navy:#0E2038; --navy-2:#16304f; --bg:#eef1f6; --surface:#ffffff;
+  --ink:#122036; --muted:#5b6b82; --line:#dbe2ec; --brand:#1d4ed8;
+  --amber:#f0a500; --amber-ink:#7a5300; --danger:#d64545; --ok:#1f9d55;
+  --s-needed:#8593a6; --s-quoted:#3b82f6; --s-awaiting:#f0a500;
+  --s-submitted:#6366f1; --s-shipped:#8b5cf6; --s-received:#1f9d55; --s-cancelled:#b0453f;
+  --radius:12px; --shadow:0 1px 2px rgba(16,32,55,.06),0 8px 24px rgba(16,32,55,.06);
+}
+body.dark{
+  --bg:#0c1420; --surface:#131f30; --ink:#e6edf5; --muted:#9fb0c4; --line:#26374d;
+  --brand:#4b86ff; --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35);
+  --s-needed:#8593a6; --s-quoted:#5a9bff; --s-awaiting:#f0a500;
+  --s-submitted:#8189ff; --s-shipped:#a78bfa; --s-received:#3cc47c; --s-cancelled:#c66;
+}
+body.dark thead th{background:#1a2a3f}
+body.dark tbody tr:hover{background:#1a2740}
+body.dark .stage .n,body.dark .stage .lb,body.dark .bcard .amt{color:var(--ink)}
+body.dark .tabs{background:#1a2740}
+body.dark .tab.active{background:#243349}
+body.dark .search input,body.dark .field input,body.dark .field select,body.dark .field textarea,
+body.dark .fchip,body.dark .li input,body.dark .recv-row .rq input{background:#0f1a29;color:var(--ink)}
+body.dark .fchip.on{background:var(--brand);border-color:var(--brand);color:#fff}
+body.dark .x,body.dark .btn.sub{background:#243349;color:var(--ink)}
+body.dark .empty h3,body.dark .mhead h2,body.dark .badge.soft{color:var(--ink)}
+body.dark .pcard .ph,body.dark .photobox .prev,body.dark .prow .thumb{background:#0f1a29}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.45}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{font-family:inherit}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.sig{font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.04em}
+.hide{display:none!important}
+
+/* ---------- Header ---------- */
+header{background:var(--navy);color:#fff;position:sticky;top:0;z-index:30;border-bottom:3px solid var(--amber)}
+.hwrap{max-width:1200px;margin:0 auto;padding:12px 18px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px;margin-right:auto}
+.logo{width:40px;height:40px;border-radius:10px;overflow:hidden;display:grid;place-items:center;flex:none}
+.logo svg{width:40px;height:40px;display:block}
+.brand h1{font-family:Oswald,sans-serif;font-weight:700;font-size:21px;letter-spacing:.06em;margin:0;line-height:1}
+.brand .tag{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#9db4d6;margin-top:3px}
+.hbtns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+.pill.ghost{background:rgba(255,255,255,.08);color:#dde7f5;border-color:rgba(255,255,255,.16)}
+.pill.ghost:hover{background:rgba(255,255,255,.16)}
+.pill.amber{background:var(--amber);color:#3a2800}
+.pill.amber:hover{filter:brightness(1.05)}
+.sync{display:flex;align-items:center;gap:7px;font-size:12px;color:#9db4d6}
+.dot{width:9px;height:9px;border-radius:50%;background:#4b5c76;flex:none}
+.dot.on{background:#39d98a;box-shadow:0 0 0 3px rgba(57,217,138,.2)}
+.dot.off{background:#e0685f}
+
+/* ---------- Layout ---------- */
+main{max-width:1200px;margin:0 auto;padding:20px 18px 80px}
+.tabs{display:flex;gap:4px;background:#e2e7f0;border-radius:10px;padding:4px;margin:4px 0 20px;width:fit-content}
+.tab{border:none;background:transparent;color:var(--muted);font-weight:600;font-size:13.5px;padding:9px 16px;border-radius:7px;display:flex;align-items:center;gap:7px}
+.tab.active{background:#fff;color:var(--ink);box-shadow:var(--shadow)}
+
+/* ---------- Pipeline rail (stats) ---------- */
+.rail{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:22px}
+.stage{position:relative;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:13px 14px 14px;box-shadow:var(--shadow);transition:transform .1s,box-shadow .1s;overflow:hidden}
+.stage:hover{transform:translateY(-2px)}
+.stage.sel{border-color:var(--brand);box-shadow:0 0 0 2px rgba(29,78,216,.18),var(--shadow)}
+.stage::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--sc)}
+.stage .n{font-family:Oswald,sans-serif;font-weight:700;font-size:30px;line-height:1;color:var(--ink)}
+.stage .lb{font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em;font-weight:600;font-size:12.5px;margin-top:6px;color:var(--ink)}
+.stage .sb{font-size:10.5px;color:var(--muted);margin-top:2px}
+.stage .dotc{position:absolute;top:13px;right:13px;width:10px;height:10px;border-radius:50%;background:var(--sc)}
+
+/* ---------- Toolbar ---------- */
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.search{flex:1;min-width:220px;position:relative}
+.search input{width:100%;padding:11px 12px 11px 38px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:14px}
+.search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--muted)}
+.chip-filter{display:flex;gap:6px;flex-wrap:wrap}
+.fchip{border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:999px;padding:7px 12px;font-size:12.5px;font-weight:600}
+.fchip.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+
+/* ---------- Orders table / cards ---------- */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+table{width:100%;border-collapse:collapse}
+thead th{font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.04em;font-size:11px;font-weight:600;color:var(--muted);text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);background:#f7f9fc}
+tbody td{padding:13px 14px;border-bottom:1px solid var(--line);font-size:13.5px;vertical-align:middle}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:#f6f9ff}
+tbody tr:last-child td{border-bottom:none}
+.po{font-weight:600}
+.sub{color:var(--muted);font-size:12px}
+.badge{display:inline-flex;align-items:center;gap:6px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em;font-weight:600;font-size:11px;padding:4px 9px;border-radius:6px;white-space:nowrap;color:#fff;background:var(--sc)}
+.badge.soft{background:color-mix(in srgb,var(--sc) 15%,#fff);color:var(--sc)}
+.due{display:inline-flex;align-items:center;gap:5px;font-size:12px}
+.due.late{color:var(--danger);font-weight:600}
+.due.late::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--danger)}
+.cards{display:none}
+
+/* ---------- Parts catalog ---------- */
+.parts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px}
+.pcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;cursor:pointer;transition:transform .1s,box-shadow .1s}
+.pcard:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(16,32,55,.12)}
+.pcard .ph{width:100%;aspect-ratio:4/3;background:#eef2f8;display:grid;place-items:center;overflow:hidden}
+.pcard .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.pcard .ph .noimg{color:#aab6c8;font-size:11px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.05em}
+.pcard .pb{padding:11px 12px 13px}
+.pcard .pd{font-weight:600;font-size:13.5px;line-height:1.3;margin-bottom:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pcard .pm{font-size:11.5px;color:var(--muted)}
+.pcard .pf{display:flex;justify-content:space-between;align-items:baseline;margin-top:7px}
+.pcard .pf .cost{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:13px}
+.pcard .pf .cat{font-size:10.5px;background:#eef2f8;color:var(--muted);padding:2px 7px;border-radius:5px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em}
+
+/* photo upload box */
+.photobox{display:flex;gap:12px;align-items:center}
+.photobox .prev{width:88px;height:66px;border-radius:9px;background:#eef2f8;border:1px solid var(--line);display:grid;place-items:center;overflow:hidden;flex:none}
+.photobox .prev img{width:100%;height:100%;object-fit:cover}
+.photobox .prev .noimg{color:#aab6c8;font-size:10px;text-align:center;padding:4px}
+
+/* part picker (stacks over order modal) */
+.picker-overlay{position:fixed;inset:0;background:rgba(14,32,56,.5);z-index:60;display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow-y:auto}
+.picker{background:#fff;border-radius:16px;width:100%;max-width:560px;box-shadow:0 24px 60px rgba(0,0,0,.35);margin:auto 0;max-height:88vh;display:flex;flex-direction:column}
+.picker .ph-search{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+.picker .ph-search input{flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:9px;font-size:14px}
+.picker .ph-list{overflow-y:auto;padding:8px}
+.prow{display:flex;gap:11px;align-items:center;padding:9px 10px;border-radius:10px;cursor:pointer}
+.prow:hover{background:#f2f7ff}
+.prow .thumb{width:46px;height:36px;border-radius:7px;background:#eef2f8;overflow:hidden;flex:none;display:grid;place-items:center}
+.prow .thumb img{width:100%;height:100%;object-fit:cover}
+.prow .thumb .noimg{color:#aab6c8;font-size:9px}
+.prow .info{flex:1;min-width:0}
+.prow .info .d{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prow .info .s{font-size:11.5px;color:var(--muted)}
+.prow .pc{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:12.5px;flex:none}
+
+/* empty states */
+.empty{padding:52px 24px;text-align:center;color:var(--muted)}
+.empty h3{font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.04em;color:var(--ink);margin:0 0 6px;font-size:16px}
+.empty p{margin:0 0 16px;font-size:13.5px}
+
+/* ---------- Billing ---------- */
+.bill-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+.bcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
+.bcard .lb{font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.04em;font-size:11.5px;color:var(--muted)}
+.bcard .amt{font-family:Oswald,sans-serif;font-weight:700;font-size:30px;margin:6px 0 2px}
+.bcard .sb{font-size:12px;color:var(--muted)}
+
+/* ---------- Modal ---------- */
+.overlay{position:fixed;inset:0;background:rgba(14,32,56,.55);backdrop-filter:blur(2px);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow-y:auto}
+.modal{background:#fff;border-radius:16px;width:100%;max-width:720px;box-shadow:0 24px 60px rgba(0,0,0,.3);margin:auto 0}
+.mhead{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff;border-radius:16px 16px 0 0;z-index:2}
+.mhead h2{font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em;font-size:18px;margin:0}
+.x{border:none;background:#eef1f6;width:34px;height:34px;border-radius:9px;font-size:17px;color:var(--muted);display:grid;place-items:center}
+.x:hover{background:#e2e7f0}
+.mbody{padding:20px 22px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.03em;font-family:Oswald,sans-serif}
+.field input,.field select,.field textarea{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;font-size:14px;background:#fff}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px rgba(29,78,216,.12)}
+.field textarea{resize:vertical;min-height:64px}
+.req{color:var(--danger)}
+.section-lb{font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.04em;font-size:12.5px;color:var(--ink);margin:18px 0 10px;padding-top:16px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+
+/* line items */
+.li{display:grid;grid-template-columns:1fr 2fr 62px 88px 88px 34px;gap:8px;align-items:center;margin-bottom:8px}
+.li input{padding:8px 9px;font-size:13px;border:1px solid var(--line);border-radius:8px;width:100%}
+.li .lidel{border:none;background:#fbeceb;color:var(--danger);border-radius:8px;height:36px;font-size:16px}
+.li-head{display:grid;grid-template-columns:1fr 2fr 62px 88px 88px 34px;gap:8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-family:Oswald,sans-serif;margin-bottom:6px}
+.recv-row{display:grid;grid-template-columns:1fr 2fr 62px 88px 88px 34px;gap:8px;align-items:center;margin-bottom:8px;font-size:13px}
+.recv-row .rq{display:flex;align-items:center;gap:6px}
+.recv-row .rq input{width:56px;padding:6px;border:1px solid var(--line);border-radius:7px;text-align:center}
+
+/* attachments */
+.att{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;border:1px solid var(--line);border-radius:9px;margin-bottom:7px;font-size:13px}
+.att a{color:var(--brand);text-decoration:none;font-weight:600}
+.att .adel{border:none;background:transparent;color:var(--danger);font-size:15px}
+
+.mfoot{display:flex;gap:10px;justify-content:space-between;align-items:center;padding:16px 22px;border-top:1px solid var(--line);position:sticky;bottom:0;background:#fff;border-radius:0 0 16px 16px;flex-wrap:wrap}
+.btn{border:none;border-radius:10px;padding:11px 18px;font-weight:600;font-size:14px}
+.btn.primary{background:var(--brand);color:#fff}
+.btn.primary:hover{filter:brightness(1.05)}
+.btn.sub{background:#eef1f6;color:var(--ink)}
+.btn.sub:hover{background:#e2e7f0}
+.btn.ok{background:var(--ok);color:#fff}
+.btn.warn{background:transparent;color:var(--danger)}
+.btn.warn:hover{background:#fbeceb}
+.linkbtn{background:none;border:none;color:var(--brand);font-weight:600;font-size:13px;padding:6px 0}
+
+/* detail rows */
+.drow{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px dashed var(--line);font-size:14px}
+.drow .k{color:var(--muted);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.02em;font-family:Oswald,sans-serif}
+
+/* login */
+.login-wrap{max-width:400px;margin:8vh auto;padding:0 18px}
+.login-card{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:30px 26px}
+.login-card .logo{width:52px;height:52px;margin:0 auto 14px}
+.login-card h2{font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.04em;text-align:center;margin:0 0 4px;font-size:20px}
+.login-card p{text-align:center;color:var(--muted);font-size:13px;margin:0 0 22px}
+.powered{text-align:center;margin-top:18px;font-size:12px;color:var(--muted);letter-spacing:.02em;display:flex;align-items:center;justify-content:center;gap:7px}
+.powered strong{color:var(--ink);font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.powered .pdot{width:14px;height:14px;border-radius:4px;background:#13294d;position:relative;flex:none;display:inline-block}
+.powered .pdot::after{content:"";position:absolute;top:2.5px;right:2.5px;width:3px;height:3px;border-radius:50%;background:var(--amber)}
+.err{background:#fbeceb;color:var(--danger);font-size:13px;padding:10px 12px;border-radius:9px;margin-bottom:14px}
+.cfg{background:#fff7e6;border:1px solid #f5d98a;color:#7a5300;font-size:13px;padding:14px 16px;border-radius:12px;margin:8vh auto 0;max-width:560px}
+.cfg code{background:#fff;border:1px solid #eadfae;padding:1px 6px;border-radius:5px;font-family:"IBM Plex Mono",monospace;font-size:12px}
+
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:12px 20px;border-radius:10px;font-size:13.5px;font-weight:600;z-index:80;box-shadow:0 8px 30px rgba(0,0,0,.3);opacity:0;transition:opacity .2s,transform .2s}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+
+@media(max-width:860px){
+  .rail{grid-template-columns:repeat(3,1fr)}
+  .grid2{grid-template-columns:1fr}
+  .panel table{display:none}
+  .cards{display:block;padding:12px}
+  .ocard{border:1px solid var(--line);border-radius:12px;padding:13px 14px;margin-bottom:10px;box-shadow:var(--shadow)}
+  .ocard:active{background:#f6f9ff}
+  .ocard .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px}
+  .ocard .meta{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:12.5px;color:var(--muted)}
+  .bill-grid{grid-template-columns:1fr}
+  .li,.li-head,.recv-row{grid-template-columns:1fr 1fr 50px 74px 74px 30px}
+  .brand .tag{display:none}
+}
+@media(max-width:480px){.rail{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<!-- CONFIG BANNER -->
+<div id="cfgBanner" class="cfg hide">
+  <strong>One step to go.</strong> Open this file and paste your Supabase project URL and anon key into the
+  <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> values near the bottom of the script, then reload.
+</div>
+
+<!-- LOGIN -->
+<div id="loginView" class="login-wrap hide">
+  <div class="login-card">
+    <div class="logo" id="loginLogo"></div>
+    <h2>Order Tracker</h2>
+    <p id="loginCust">Sign in to sync your orders across devices</p>
+    <div id="loginErr" class="err hide"></div>
+    <div class="field"><label>Email</label><input id="liEmail" type="email" autocomplete="username" /></div>
+    <div class="field"><label>Password</label><input id="liPass" type="password" autocomplete="current-password" /></div>
+    <button class="btn primary" id="liBtn" style="width:100%">Sign in</button>
+  </div>
+  <div class="powered">
+    <span class="pdot"></span> Powered by <strong>Piercy&nbsp;Software</strong>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="appView" class="hide">
+  <header>
+    <div class="hwrap">
+      <div class="brand">
+        <div class="logo" id="hdrLogo"></div>
+        <div><h1>PIERCY SOFTWARE</h1><div class="tag" id="hdrCust">Order Tracker</div></div>
+      </div>
+      <div class="hbtns">
+        <div class="sync"><span class="dot" id="syncDot"></span><span id="syncTxt">Connecting…</span></div>
+        <button class="pill ghost" onclick="openBuilds()">🚑 Units</button>
+        <button class="pill ghost" onclick="openSuppliers()">🏢 Suppliers</button>
+        <button class="pill ghost" onclick="window.open('https://mail.google.com/','_blank')" title="Open Gmail">✉ Gmail</button>
+        <button class="pill ghost" onclick="toggleDark()" id="darkBtn" title="Toggle dark mode">🌙</button>
+        <button class="pill ghost" onclick="signOut()">Sign out</button>
+        <button class="pill amber" onclick="openOrder()">＋ New Order</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="tabs">
+      <button class="tab active" data-tab="orders" onclick="setTab('orders')">📋 Orders</button>
+      <button class="tab" data-tab="parts" onclick="setTab('parts')">🔩 Parts</button>
+      <button class="tab" data-tab="packing" onclick="setTab('packing')">📦 Packing Slips</button>
+      <button class="tab" data-tab="billing" onclick="setTab('billing')">💲 Billing</button>
+    </div>
+
+    <!-- ORDERS TAB -->
+    <section id="tab-orders">
+      <div class="rail" id="rail"></div>
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          <input id="searchBox" placeholder="Search PO, supplier, unit, part, tracking…" oninput="render()" />
+        </div>
+        <button class="fchip" onclick="exportCSV()">⭳ Export CSV</button>
+      </div>
+      <div class="panel">
+        <table>
+          <thead><tr>
+            <th>Order #</th><th>Supplier</th><th>Unit / Build</th><th>Qty</th><th>Est $</th><th>Status</th><th>Expected</th><th>Updated</th>
+          </tr></thead>
+          <tbody id="ordersBody"></tbody>
+        </table>
+        <div class="cards" id="ordersCards"></div>
+        <div class="empty hide" id="ordersEmpty">
+          <h3>No orders yet</h3><p>Log your first parts order to start the pipeline.</p>
+          <button class="btn primary" onclick="openOrder()">＋ New Order</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- PARTS TAB -->
+    <section id="tab-parts" class="hide">
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          <input id="partSearch" placeholder="Search parts by name, SKU, category…" oninput="renderParts()" />
+        </div>
+        <button class="pill ghost" onclick="openBulkParts()" style="color:var(--ink)">⇪ Bulk Add</button>
+        <button class="pill amber" onclick="openPart()" style="color:#3a2800">＋ Add Part</button>
+      </div>
+      <div class="parts-grid" id="partsGrid"></div>
+      <div class="empty hide" id="partsEmpty">
+        <h3>No parts yet</h3><p>Add your parts with photos, then pick them when building an order.</p>
+        <button class="btn primary" onclick="openPart()">＋ Add Part</button>
+      </div>
+    </section>
+
+    <!-- PACKING TAB -->
+    <section id="tab-packing" class="hide">
+      <div class="toolbar">
+        <div style="margin-right:auto">
+          <div class="sig" style="font-size:16px">Packing Slips</div>
+          <div class="sub">Verify received items against orders</div>
+        </div>
+        <button class="pill amber" onclick="openSlip()">＋ Add Packing Slip</button>
+      </div>
+      <div class="panel">
+        <table>
+          <thead><tr><th>Slip #</th><th>Linked PO</th><th>Supplier</th><th>Received</th><th>Notes</th></tr></thead>
+          <tbody id="slipsBody"></tbody>
+        </table>
+        <div class="empty hide" id="slipsEmpty"><h3>No packing slips</h3><p>Add a slip when a shipment arrives.</p></div>
+      </div>
+    </section>
+
+    <!-- BILLING TAB -->
+    <section id="tab-billing" class="hide">
+      <div class="bill-grid">
+        <div class="bcard"><div class="lb">This Month</div><div class="amt mono" id="bMonth">$0</div><div class="sb">Received orders this month</div></div>
+        <div class="bcard"><div class="lb">Year to Date</div><div class="amt mono" id="bYTD">$0</div><div class="sb">All received this year</div></div>
+        <div class="bcard"><div class="lb">Open Pipeline</div><div class="amt mono" id="bOpen">$0</div><div class="sb">Estimated, not yet received</div></div>
+      </div>
+      <div class="panel">
+        <table>
+          <thead><tr><th>PO #</th><th>Supplier</th><th>Unit</th><th>Date</th><th>Amount</th></tr></thead>
+          <tbody id="billBody"></tbody>
+        </table>
+        <div class="empty hide" id="billEmpty"><h3>Nothing received yet</h3><p>Received orders show up here as billing history.</p></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="modalRoot"></div>
+<div id="pickerRoot"></div>
+<div id="toast" class="toast"></div>
+
+<script>
+/* ======================================================================
+   PROMEDIC ORDER TRACKER
+   Single-file app. Backend: Supabase (database + auth + file storage).
+   ====================================================================== */
+
+const STATUSES = [
+  {key:'needed',    label:'Needed',            sub:'Needs ordering',   varc:'--s-needed'},
+  {key:'quoted',    label:'Quoted',            sub:'Quote received',   varc:'--s-quoted'},
+  {key:'awaiting',  label:'Awaiting Approval', sub:'Pending A/P',      varc:'--s-awaiting'},
+  {key:'submitted', label:'Submitted',         sub:'Order confirmed',  varc:'--s-submitted'},
+  {key:'shipped',   label:'Shipped',           sub:'In transit',       varc:'--s-shipped'},
+  {key:'received',  label:'Received',          sub:'Closed & updated', varc:'--s-received'},
+];
+const STATUS_MAP = Object.fromEntries(STATUSES.map(s=>[s.key,s]));
+STATUS_MAP.cancelled = {key:'cancelled',label:'Cancelled',sub:'',varc:'--s-cancelled'};
+const CARRIERS = ['UPS','FedEx','USPS','LTL Freight','Will Call','Other'];
+
+const LOGO_SVG = `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><rect width="40" height="40" rx="10" fill="#13294d"/><text x="19.5" y="28.5" text-anchor="middle" font-family="Oswald,sans-serif" font-weight="700" font-size="25" fill="#fff">P</text><circle cx="29" cy="12" r="3" fill="#f0a500"/></svg>`;
+
+/* ---------- State ---------- */
+let sb = null;
+let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], tab:'orders', filter:'all', editing:null, editingPart:null, lineItems:[] };
+
+/* ---------- Helpers ---------- */
+const $ = s => document.querySelector(s);
+const el = (id) => document.getElementById(id);
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const money = n => '$'+(Number(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const money0 = n => '$'+Math.round(Number(n)||0).toLocaleString('en-US');
+const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+const today = () => new Date().toISOString().slice(0,10);
+function toast(msg){const t=el('toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
+function timeAgo(ts){ if(!ts) return '—'; const d=(Date.now()-new Date(ts))/1000;
+  if(d<60)return 'just now'; if(d<3600)return Math.floor(d/60)+'m ago'; if(d<86400)return Math.floor(d/3600)+'h ago';
+  return Math.floor(d/86400)+'d ago'; }
+function isLate(o){ return o.expected_date && o.expected_date<today() && !['received','cancelled'].includes(o.status); }
+function orderTotals(o){ const items=o.items||[]; const qty=items.reduce((a,i)=>a+(Number(i.qty)||0),0);
+  const est=Number(o.estimated_total)|| items.reduce((a,i)=>a+((Number(i.qty)||0)*(Number(i.unit_price)||0)),0);
+  return {qty,est}; }
+
+/* ---------- Data loading ---------- */
+async function loadAll(){
+  const [sup,bld,ord,slp,prt] = await Promise.all([
+    sb.from('suppliers').select('*').order('name'),
+    sb.from('builds').select('*').order('created_at',{ascending:false}),
+    sb.from('orders').select('*, supplier:suppliers(name), build:builds(name), items:order_items(*)').order('updated_at',{ascending:false}),
+    sb.from('packing_slips').select('*, order:orders(po_number)').order('date_received',{ascending:false}),
+    sb.from('parts').select('*, supplier:suppliers(name)').order('description'),
+  ]);
+  for(const r of [sup,bld,ord,slp,prt]){ if(r.error){ console.error(r.error); toast('Load error: '+r.error.message); } }
+  state.suppliers = sup.data||[]; state.builds = bld.data||[]; state.orders = ord.data||[]; state.slips = slp.data||[]; state.parts = prt.data||[];
+  render();
+}
+function partPhotoUrl(path){ return path ? sb.storage.from('part-photos').getPublicUrl(path).data.publicUrl : ''; }
+
+/* ---------- Render: orders + rail ---------- */
+function filteredOrders(){
+  const q = (el('searchBox').value||'').toLowerCase().trim();
+  return state.orders.filter(o=>{
+    if(state.filter!=='all' && o.status!==state.filter) return false;
+    if(!q) return true;
+    const hay = [o.po_number,o.supplier?.name,o.build?.name,o.tracking_id,o.carrier,o.confirmation_number,
+      ...(o.items||[]).flatMap(i=>[i.sku,i.description])].join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+}
+function render(){
+  // rail
+  el('rail').innerHTML = STATUSES.map(s=>{
+    const c = state.orders.filter(o=>o.status===s.key).length;
+    const sel = state.filter===s.key ? ' sel':'';
+    return `<button class="stage${sel}" style="--sc:var(${s.varc})" onclick="setFilter('${s.key}')">
+      <span class="dotc"></span><div class="n">${c}</div>
+      <div class="lb">${s.label}</div><div class="sb">${s.sub}</div></button>`;
+  }).join('');
+
+  const list = filteredOrders();
+  const body = el('ordersBody'), cards = el('ordersCards');
+  el('ordersEmpty').classList.toggle('hide', state.orders.length>0);
+  if(!list.length){ body.innerHTML=''; cards.innerHTML=''; }
+  else {
+    body.innerHTML = list.map(o=>{
+      const t=orderTotals(o), st=STATUS_MAP[o.status]||STATUS_MAP.needed;
+      const late=isLate(o);
+      return `<tr onclick="viewOrder('${o.id}')">
+        <td class="po mono">${esc(o.po_number||'—')}</td>
+        <td>${esc(o.supplier?.name||'—')}</td>
+        <td>${o.build?.name?esc(o.build.name):'<span class=sub>—</span>'}</td>
+        <td class="mono">${t.qty||'—'}</td>
+        <td class="mono">${t.est?money0(t.est):'—'}</td>
+        <td><span class="badge" style="--sc:var(${st.varc})">${st.label}</span></td>
+        <td><span class="due ${late?'late':''}">${o.expected_date?fmtDate(o.expected_date):'—'}</span></td>
+        <td class="sub">${timeAgo(o.updated_at)}</td></tr>`;
+    }).join('');
+    cards.innerHTML = list.map(o=>{
+      const t=orderTotals(o), st=STATUS_MAP[o.status]||STATUS_MAP.needed, late=isLate(o);
+      return `<div class="ocard" onclick="viewOrder('${o.id}')">
+        <div class="top"><div><div class="po mono">${esc(o.po_number||'No PO')}</div>
+          <div class="sub">${esc(o.supplier?.name||'—')}${o.build?.name?' · '+esc(o.build.name):''}</div></div>
+          <span class="badge" style="--sc:var(${st.varc})">${st.label}</span></div>
+        <div class="meta">
+          <span>Qty <strong class="mono">${t.qty||'—'}</strong></span>
+          <span>Est <strong class="mono">${t.est?money0(t.est):'—'}</strong></span>
+          <span class="due ${late?'late':''}">${o.expected_date?'Exp '+fmtDate(o.expected_date):'No date'}</span>
+        </div></div>`;
+    }).join('');
+  }
+  renderSlips(); renderBilling(); renderParts();
+}
+
+/* ---------- Render: packing slips ---------- */
+function renderSlips(){
+  const b=el('slipsBody');
+  el('slipsEmpty').classList.toggle('hide', state.slips.length>0);
+  b.innerHTML = state.slips.map(s=>`<tr>
+    <td class="mono">${esc(s.slip_number||'—')}</td>
+    <td class="mono">${esc(s.order?.po_number||'—')}</td>
+    <td>${esc(s.supplier||'—')}</td>
+    <td>${fmtDate(s.date_received)}</td>
+    <td class="sub">${esc(s.notes||'')}</td></tr>`).join('');
+}
+
+/* ---------- Render: billing ---------- */
+function renderBilling(){
+  const now=new Date(), ym=now.toISOString().slice(0,7), yr=String(now.getFullYear());
+  let month=0,ytd=0,open=0; const hist=[];
+  for(const o of state.orders){
+    const est=orderTotals(o).est;
+    if(o.status==='received'){
+      const d=o.order_date||o.updated_at?.slice(0,10)||'';
+      if(d.slice(0,7)===ym) month+=est;
+      if(d.slice(0,4)===yr) ytd+=est;
+      hist.push({o,d,est});
+    } else if(o.status!=='cancelled'){ open+=est; }
+  }
+  el('bMonth').textContent=money0(month); el('bYTD').textContent=money0(ytd); el('bOpen').textContent=money0(open);
+  el('billEmpty').classList.toggle('hide', hist.length>0);
+  el('billBody').innerHTML = hist.sort((a,b)=>(b.d||'').localeCompare(a.d||'')).map(({o,d,est})=>`<tr>
+    <td class="mono">${esc(o.po_number||'—')}</td><td>${esc(o.supplier?.name||'—')}</td>
+    <td>${esc(o.build?.name||'—')}</td><td>${fmtDate(d)}</td><td class="mono">${money(est)}</td></tr>`).join('');
+}
+
+/* ---------- Tabs / filters ---------- */
+function setTab(t){ state.tab=t;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
+  ['orders','parts','packing','billing'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
+}
+function setFilter(k){ state.filter = state.filter===k?'all':k; render(); }
+
+/* ====================== PARTS CATALOG ====================== */
+function filteredParts(){
+  const q = (el('partSearch')?.value||'').toLowerCase().trim();
+  let list = state.parts;
+  if(q) list = list.filter(p=>[p.sku,p.description,p.category,p.supplier?.name].join(' ').toLowerCase().includes(q));
+  return list;
+}
+function renderParts(){
+  const grid = el('partsGrid'); if(!grid) return;
+  el('partsEmpty').classList.toggle('hide', state.parts.length>0);
+  const list = filteredParts();
+  grid.innerHTML = list.map(p=>{
+    const url = partPhotoUrl(p.photo_path);
+    const img = url ? `<img src="${url}" alt="" loading="lazy"/>` : `<span class="noimg">No photo</span>`;
+    return `<div class="pcard" onclick="openPart(state.parts.find(x=>x.id==='${p.id}'))">
+      <div class="ph">${img}</div>
+      <div class="pb">
+        <div class="pd">${esc(p.description||'Unnamed part')}</div>
+        <div class="pm">${esc(p.sku||'—')}${p.supplier?.name?' · '+esc(p.supplier.name):''}</div>
+        <div class="pf">
+          <span class="cost">${p.cost?money(p.cost):'—'}</span>
+          ${p.category?`<span class="cat">${esc(p.category)}</span>`:''}
+        </div>
+      </div></div>`;
+  }).join('');
+}
+
+let _partPhoto = { path:null, url:null }; // staged photo for the open modal
+function openPart(p=null){
+  state.editingPart = p;
+  _partPhoto = { path: p?.photo_path||null, url: p?.photo_path?partPhotoUrl(p.photo_path):null };
+  const supOpts = state.suppliers.map(s=>`<option value="${s.id}" ${p&&p.supplier_id===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+  const cats = [...new Set(state.parts.map(x=>x.category).filter(Boolean))];
+  modal(`
+    <div class="mhead"><h2>${p?'Edit Part':'New Part'}</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="field"><label>Photo</label>
+        <div class="photobox">
+          <div class="prev" id="partPrev">${_partPhoto.url?`<img src="${_partPhoto.url}">`:'<span class="noimg">No photo</span>'}</div>
+          <div>
+            <input id="partFile" type="file" accept="image/*" style="font-size:13px" onchange="uploadPartPhoto()" />
+            <div class="sub" style="margin-top:6px">A clear photo helps you spot the right part fast.</div>
+            ${_partPhoto.path?`<button class="linkbtn" onclick="clearPartPhoto()" style="color:var(--danger)">Remove photo</button>`:''}
+          </div>
+        </div>
+      </div>
+      <div class="field"><label>Description <span class="req">*</span></label><input id="pDesc" value="${esc(p?.description||'')}" placeholder="e.g. 900 Super LED Scene Light" /></div>
+      <div class="grid2">
+        <div class="field"><label>SKU / Part #</label><input id="pSku" value="${esc(p?.sku||'')}" /></div>
+        <div class="field"><label>Cost ($)</label><input id="pCost" type="number" step="0.01" value="${p?.cost||''}" /></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Category</label><input id="pCat" list="catList" value="${esc(p?.category||'')}" />
+          <datalist id="catList">${cats.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
+        <div class="field"><label>Supplier</label><select id="pSupplier"><option value="">— None —</option>${supOpts}</select></div>
+      </div>
+      <div class="field"><label>Notes</label><textarea id="pNotes">${esc(p?.notes||'')}</textarea></div>
+    </div>
+    <div class="mfoot">
+      <div>${p?`<button class="btn warn" onclick="deletePart('${p.id}')">Delete</button>`:''}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" onclick="savePart()">${p?'Save changes':'Add part'}</button>
+      </div>
+    </div>`);
+}
+async function uploadPartPhoto(){
+  const f = el('partFile').files[0]; if(!f) return;
+  el('partPrev').innerHTML = '<span class="noimg">Uploading…</span>';
+  const path = `parts/${Date.now()}_${f.name.replace(/[^\w.\-]/g,'_')}`;
+  const up = await sb.storage.from('part-photos').upload(path, f, { upsert:true });
+  if(up.error){ toast('Photo upload failed: '+up.error.message); el('partPrev').innerHTML='<span class="noimg">No photo</span>'; return; }
+  _partPhoto = { path, url: partPhotoUrl(path) };
+  el('partPrev').innerHTML = `<img src="${_partPhoto.url}">`;
+}
+function clearPartPhoto(){ _partPhoto = { path:null, url:null }; el('partPrev').innerHTML='<span class="noimg">No photo</span>'; }
+async function savePart(){
+  const desc = el('pDesc').value.trim();
+  if(!desc){ toast('Give the part a description'); return; }
+  const rec = {
+    description: desc, sku: el('pSku').value.trim()||null,
+    cost: el('pCost').value?parseFloat(el('pCost').value):null,
+    category: el('pCat').value.trim()||null,
+    supplier_id: el('pSupplier').value||null,
+    notes: el('pNotes').value.trim()||null,
+    photo_path: _partPhoto.path||null,
+  };
+  let err;
+  if(state.editingPart){ ({error:err} = await sb.from('parts').update(rec).eq('id', state.editingPart.id)); }
+  else { ({error:err} = await sb.from('parts').insert(rec)); }
+  if(err){ toast('Save failed: '+err.message); return; }
+  closeModal(); toast(state.editingPart?'Part updated':'Part added'); await loadAll(); setTab('parts');
+}
+async function deletePart(id){
+  if(!confirm('Delete this part from the catalog? Orders that used it are not affected.')) return;
+  const p = state.parts.find(x=>x.id===id);
+  const {error} = await sb.from('parts').delete().eq('id',id);
+  if(error){ toast('Delete failed: '+error.message); return; }
+  if(p?.photo_path) sb.storage.from('part-photos').remove([p.photo_path]);
+  closeModal(); toast('Part deleted'); await loadAll(); setTab('parts');
+}
+
+/* ---------- Catalog picker (used inside the order modal) ---------- */
+function openPartPicker(){
+  if(!state.parts.length){ toast('No parts in the catalog yet — add some in the Parts tab'); return; }
+  el('pickerRoot').innerHTML = `
+    <div class="picker-overlay" onclick="if(event.target===this)closePartPicker()">
+      <div class="picker">
+        <div class="ph-search">
+          <input id="pickSearch" placeholder="Search the catalog…" oninput="renderPicker()" autofocus />
+          <button class="x" onclick="closePartPicker()">✕</button>
+        </div>
+        <div class="ph-list" id="pickList"></div>
+      </div>
+    </div>`;
+  renderPicker();
+  setTimeout(()=>el('pickSearch')?.focus(), 50);
+}
+function renderPicker(){
+  const q = (el('pickSearch')?.value||'').toLowerCase().trim();
+  let list = state.parts;
+  if(q) list = list.filter(p=>[p.sku,p.description,p.category,p.supplier?.name].join(' ').toLowerCase().includes(q));
+  el('pickList').innerHTML = list.map(p=>{
+    const url = partPhotoUrl(p.photo_path);
+    const thumb = url?`<img src="${url}">`:'<span class="noimg">—</span>';
+    return `<div class="prow" onclick="pickPart('${p.id}')">
+      <div class="thumb">${thumb}</div>
+      <div class="info"><div class="d">${esc(p.description||'Part')}</div><div class="s">${esc(p.sku||'—')}${p.supplier?.name?' · '+esc(p.supplier.name):''}</div></div>
+      <div class="pc">${p.cost?money(p.cost):''}</div>
+    </div>`;
+  }).join('') || '<div class="sub" style="padding:16px">No matches.</div>';
+}
+function pickPart(id){
+  const p = state.parts.find(x=>x.id===id); if(!p) return;
+  state.lineItems.push({ sku:p.sku||'', description:p.description||'', qty:1, unit_price:Number(p.cost)||0, received_qty:0 });
+  renderLines();
+  // auto-fill the order's supplier if it's empty and the part has one
+  const supSel = el('fSupplier');
+  if(supSel && !supSel.value && p.supplier_id) supSel.value = p.supplier_id;
+  closePartPicker();
+}
+function closePartPicker(){ el('pickerRoot').innerHTML=''; }
+
+/* ---------- Bulk add: paste rows + batch photos by filename ---------- */
+function parseMoney(v){ if(v==null) return null; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
+function parseBulk(text){
+  return text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).map(line=>{
+    const cols = line.includes('\t') ? line.split('\t') : line.split(',');
+    const [description,sku,category,supplier,cost] = cols.map(c=>(c||'').trim());
+    return { description, sku, category, supplier, cost:parseMoney(cost) };
+  }).filter(r=>r.description);
+}
+function openBulkParts(){
+  modal(`
+    <div class="mhead"><h2>Bulk Add Parts</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="section-lb" style="border-top:none;padding-top:0;margin-top:0">Step 1 · Paste part info</div>
+      <p class="sub" style="margin-top:0">In your spreadsheet, put columns in this order, then copy the rows and paste below:</p>
+      <p class="sub" style="font-family:'IBM Plex Mono',monospace;background:#eef2f8;padding:8px 10px;border-radius:8px;color:var(--ink)">Description &nbsp;|&nbsp; SKU &nbsp;|&nbsp; Category &nbsp;|&nbsp; Supplier &nbsp;|&nbsp; Cost</p>
+      <button class="linkbtn" onclick="downloadPartTemplate()">⬇ Download a blank spreadsheet template</button>
+      <textarea id="bulkText" style="width:100%;min-height:120px;margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:10px;border:1px solid var(--line);border-radius:9px" placeholder="900 Super LED Scene Light	9SC0ENZR	Lights & Warning	Whelen	222.09"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn sub" onclick="previewBulk()">Preview</button>
+        <button class="btn primary" onclick="importBulk()">Import parts</button>
+      </div>
+      <div id="bulkPreview" class="sub" style="margin-top:10px"></div>
+
+      <div class="section-lb">Step 2 · Add photos in bulk <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">optional</span></div>
+      <p class="sub" style="margin-top:0">Name each photo file by its <strong>SKU</strong> (e.g. <code>9SC0ENZR.jpg</code>), then select them all at once. Each photo attaches to the part with the matching SKU.</p>
+      <input id="bulkPhotos" type="file" accept="image/*" multiple style="font-size:13px" onchange="bulkPhotoUpload()" />
+      <div id="bulkPhotoLog" class="sub" style="margin-top:10px;max-height:180px;overflow-y:auto"></div>
+    </div>
+    <div class="mfoot"><span></span><button class="btn sub" onclick="closeModal()">Done</button></div>`);
+}
+function downloadPartTemplate(){
+  const csv = 'Description,SKU,Category,Supplier,Cost\n"900 Super LED Scene Light",9SC0ENZR,Lights & Warning,Whelen,222.09\n';
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='parts_template.csv'; a.click();
+}
+function previewBulk(){
+  const rows=parseBulk(el('bulkText').value);
+  if(!rows.length){ el('bulkPreview').innerHTML='<span style="color:var(--danger)">No rows found — paste your parts above.</span>'; return; }
+  const show=rows.slice(0,5).map(r=>`• ${esc(r.description)} <span class="mono">${esc(r.sku||'')}</span> ${r.cost!=null?money(r.cost):''}`).join('<br>');
+  el('bulkPreview').innerHTML = `Found <strong>${rows.length}</strong> part${rows.length>1?'s':''}. First few:<br>${show}${rows.length>5?'<br>…':''}`;
+}
+async function importBulk(){
+  const rows=parseBulk(el('bulkText').value);
+  if(!rows.length){ toast('Nothing to import — paste your parts first'); return; }
+  el('bulkPreview').innerHTML='Importing…';
+  // make sure suppliers exist
+  const map={}; state.suppliers.forEach(s=>map[(s.name||'').toLowerCase()]=s.id);
+  const needed=[...new Set(rows.map(r=>(r.supplier||'').trim()).filter(Boolean))].filter(n=>!map[n.toLowerCase()]);
+  if(needed.length){
+    const ins=await sb.from('suppliers').insert(needed.map(name=>({name})));
+    if(ins.error){ el('bulkPreview').innerHTML='<span style="color:var(--danger)">Supplier error: '+esc(ins.error.message)+'</span>'; return; }
+    const {data}=await sb.from('suppliers').select('id,name'); (data||[]).forEach(s=>map[(s.name||'').toLowerCase()]=s.id);
+  }
+  const recs=rows.map(r=>({description:r.description,sku:r.sku||null,category:r.category||null,
+    supplier_id:map[(r.supplier||'').toLowerCase()]||null,cost:r.cost}));
+  const ins=await sb.from('parts').insert(recs);
+  if(ins.error){ el('bulkPreview').innerHTML='<span style="color:var(--danger)">Import failed: '+esc(ins.error.message)+'</span>'; return; }
+  el('bulkText').value='';
+  el('bulkPreview').innerHTML=`<span style="color:var(--ok)">✓ Imported ${recs.length} parts. Now add photos below, or close.</span>`;
+  toast(`Imported ${recs.length} parts`);
+  await loadAll();
+}
+async function bulkPhotoUpload(){
+  const files=[...el('bulkPhotos').files]; if(!files.length) return;
+  const logBox=el('bulkPhotoLog'); logBox.innerHTML='';
+  const bySku={}; state.parts.forEach(p=>{ if(p.sku) bySku[p.sku.toLowerCase().trim()]=p; });
+  let matched=0, missed=0;
+  for(const f of files){
+    const base=f.name.replace(/\.[^.]+$/,'').toLowerCase().trim();
+    const part=bySku[base];
+    if(!part){ missed++; logBox.innerHTML += `<div>✕ ${esc(f.name)} — no part with that SKU</div>`; continue; }
+    const path=`parts/${Date.now()}_${f.name.replace(/[^\w.\-]/g,'_')}`;
+    const up=await sb.storage.from('part-photos').upload(path,f,{upsert:true});
+    if(up.error){ logBox.innerHTML += `<div style="color:var(--danger)">✕ ${esc(f.name)} — ${esc(up.error.message)}</div>`; continue; }
+    const upd=await sb.from('parts').update({photo_path:path}).eq('id',part.id);
+    if(upd.error){ logBox.innerHTML += `<div style="color:var(--danger)">✕ ${esc(f.name)} — save failed</div>`; continue; }
+    matched++; logBox.innerHTML += `<div style="color:var(--ok)">✓ ${esc(f.name)} → ${esc(part.description)}</div>`;
+    logBox.scrollTop=logBox.scrollHeight;
+  }
+  el('bulkPhotos').value='';
+  toast(`${matched} photo${matched===1?'':'s'} attached${missed?`, ${missed} unmatched`:''}`);
+  await loadAll();
+}
+
+
+/* ====================== MODALS ====================== */
+function closeModal(){ el('modalRoot').innerHTML=''; }
+function modal(html){ el('modalRoot').innerHTML=`<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`; }
+
+/* ---------- Order modal ---------- */
+function openOrder(o=null){
+  state.editing = o;
+  state.lineItems = o ? (o.items||[]).map(i=>({...i})) : [{sku:'',description:'',qty:1,unit_price:0,received_qty:0}];
+  const supOpts = state.suppliers.map(s=>`<option value="${s.id}" ${o&&o.supplier_id===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+  const bldOpts = state.builds.map(b=>`<option value="${b.id}" ${o&&o.build_id===b.id?'selected':''}>${esc(b.name)}</option>`).join('');
+  const stOpts = [...STATUSES,STATUS_MAP.cancelled].map(s=>`<option value="${s.key}" ${o&&o.status===s.key?'selected':(!o&&s.key==='needed'?'selected':'')}>${s.label}</option>`).join('');
+  const carOpts = CARRIERS.map(c=>`<option ${o&&o.carrier===c?'selected':''}>${c}</option>`).join('');
+  modal(`
+    <div class="mhead"><h2>${o?'Edit Order':'New Order'}</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="grid2">
+        <div class="field"><label>Supplier <span class="req">*</span></label>
+          <select id="fSupplier"><option value="">— Select —</option>${supOpts}</select></div>
+        <div class="field"><label>Unit / Build</label>
+          <select id="fBuild"><option value="">— None —</option>${bldOpts}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Status <span class="req">*</span></label><select id="fStatus">${stOpts}</select></div>
+        <div class="field"><label>PO Number</label><input id="fPO" value="${esc(o?.po_number||'')}" /></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Order / Quote Date</label><input id="fOrderDate" type="date" value="${o?.order_date||''}" /></div>
+        <div class="field"><label>Expected Delivery</label><input id="fExpected" type="date" value="${o?.expected_date||''}" /></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Carrier</label><select id="fCarrier"><option value="">— None —</option>${carOpts}</select></div>
+        <div class="field"><label>Tracking ID</label><input id="fTracking" value="${esc(o?.tracking_id||'')}" /></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Order Confirmation #</label><input id="fConf" value="${esc(o?.confirmation_number||'')}" /></div>
+        <div class="field"><label>Estimated Total ($) — blank = auto</label><input id="fEst" type="number" step="0.01" value="${o?.estimated_total||''}" /></div>
+      </div>
+
+      <div class="section-lb">Parts / Items <span><button class="linkbtn" onclick="openPartPicker()">🔩 From Catalog</button> &nbsp; <button class="linkbtn" onclick="addLine()">＋ Blank Row</button></span></div>
+      <div class="li-head"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Recv'd</span><span></span></div>
+      <div id="lineItems"></div>
+
+      <div class="section-lb">Attachments <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">quotes, packing slips, photos</span></div>
+      <div id="attList">${o?'<div class="sub">Loading…</div>':'<div class="sub">Save the order first to attach files.</div>'}</div>
+      ${o?`<input id="fFile" type="file" style="margin-top:8px;font-size:13px" onchange="uploadAttachment('${o.id}')" />`:''}
+
+      <div class="field" style="margin-top:16px"><label>Notes</label><textarea id="fNotes">${esc(o?.notes||'')}</textarea></div>
+    </div>
+    <div class="mfoot">
+      <div>${o?`<button class="btn warn" onclick="deleteOrder('${o.id}')">Delete</button>`:''}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" onclick="saveOrder()">${o?'Save changes':'Create order'}</button>
+      </div>
+    </div>`);
+  renderLines();
+  if(o) loadAttachments(o.id);
+}
+function renderLines(){
+  el('lineItems').innerHTML = state.lineItems.map((it,i)=>`<div class="li">
+    <input value="${esc(it.sku||'')}" placeholder="SKU" oninput="setLine(${i},'sku',this.value)"/>
+    <input value="${esc(it.description||'')}" placeholder="Description" oninput="setLine(${i},'description',this.value)"/>
+    <input class="mono" type="number" min="0" value="${it.qty??1}" oninput="setLine(${i},'qty',this.value)"/>
+    <input class="mono" type="number" min="0" step="0.01" value="${it.unit_price??0}" oninput="setLine(${i},'unit_price',this.value)"/>
+    <input class="mono" type="number" min="0" value="${it.received_qty??0}" oninput="setLine(${i},'received_qty',this.value)"/>
+    <button class="lidel" onclick="delLine(${i})">✕</button></div>`).join('');
+}
+function addLine(){ state.lineItems.push({sku:'',description:'',qty:1,unit_price:0,received_qty:0}); renderLines(); }
+function delLine(i){ state.lineItems.splice(i,1); if(!state.lineItems.length)addLine(); renderLines(); }
+function setLine(i,k,v){ state.lineItems[i][k] = (k==='sku'||k==='description')?v:parseFloat(v||0); }
+
+async function saveOrder(){
+  const supplier_id = el('fSupplier').value;
+  if(!supplier_id){ toast('Pick a supplier first'); return; }
+  const rec = {
+    supplier_id, build_id: el('fBuild').value||null, status: el('fStatus').value,
+    po_number: el('fPO').value.trim()||null, order_date: el('fOrderDate').value||null,
+    expected_date: el('fExpected').value||null, carrier: el('fCarrier').value||null,
+    tracking_id: el('fTracking').value.trim()||null, confirmation_number: el('fConf').value.trim()||null,
+    estimated_total: el('fEst').value?parseFloat(el('fEst').value):null,
+    notes: el('fNotes').value.trim()||null, updated_at: new Date().toISOString(),
+  };
+  let orderId = state.editing?.id;
+  if(orderId){
+    const {error}=await sb.from('orders').update(rec).eq('id',orderId);
+    if(error){toast('Save failed: '+error.message);return;}
+    await sb.from('order_items').delete().eq('order_id',orderId);
+  } else {
+    const {data,error}=await sb.from('orders').insert(rec).select('id').single();
+    if(error){toast('Save failed: '+error.message);return;}
+    orderId=data.id;
+  }
+  const items = state.lineItems.filter(i=>i.sku||i.description||i.qty)
+    .map(i=>({order_id:orderId,sku:i.sku||null,description:i.description||null,
+      qty:Number(i.qty)||0,unit_price:Number(i.unit_price)||0,received_qty:Number(i.received_qty)||0}));
+  if(items.length){ const {error}=await sb.from('order_items').insert(items); if(error)toast('Items error: '+error.message); }
+  closeModal(); toast(state.editing?'Order updated':'Order created'); await loadAll();
+}
+async function deleteOrder(id){
+  if(!confirm('Delete this order and its line items? This cannot be undone.')) return;
+  const {error}=await sb.from('orders').delete().eq('id',id);
+  if(error){toast('Delete failed: '+error.message);return;}
+  closeModal(); toast('Order deleted'); await loadAll();
+}
+
+/* ---------- Order detail ---------- */
+function viewOrder(id){
+  const o = state.orders.find(x=>x.id===id); if(!o) return;
+  const st=STATUS_MAP[o.status]||STATUS_MAP.needed, t=orderTotals(o), late=isLate(o);
+  const idx = STATUSES.findIndex(s=>s.key===o.status);
+  const next = (idx>=0 && idx<STATUSES.length-1)?STATUSES[idx+1]:null;
+  const itemsHtml = (o.items||[]).length ? `
+    <div class="li-head" style="margin-top:6px"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Recv'd</span><span></span></div>
+    ${o.items.map(i=>`<div class="recv-row">
+      <span class="mono">${esc(i.sku||'—')}</span><span>${esc(i.description||'—')}</span>
+      <span class="mono">${i.qty}</span><span class="mono">${money(i.unit_price)}</span>
+      <span class="rq"><input class="mono" type="number" min="0" max="${i.qty}" value="${i.received_qty||0}"
+        onchange="setReceived('${i.id}',this.value,${i.qty})"/> / ${i.qty}</span><span></span></div>`).join('')}` 
+    : '<div class="sub">No line items on this order.</div>';
+  modal(`
+    <div class="mhead"><h2>${esc(o.po_number||'Order')} <span class="badge" style="--sc:var(${st.varc});vertical-align:middle;margin-left:8px">${st.label}</span></h2>
+      <button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      ${late?`<div class="err" style="background:#fff3d6;color:#7a5300">⚠ Past expected delivery (${fmtDate(o.expected_date)})</div>`:''}
+      <div class="drow"><span class="k">Supplier</span><span>${esc(o.supplier?.name||'—')}</span></div>
+      <div class="drow"><span class="k">Unit / Build</span><span>${esc(o.build?.name||'—')}</span></div>
+      <div class="drow"><span class="k">Order Date</span><span>${fmtDate(o.order_date)}</span></div>
+      <div class="drow"><span class="k">Expected</span><span>${fmtDate(o.expected_date)}</span></div>
+      <div class="drow"><span class="k">Carrier / Tracking</span><span>${esc(o.carrier||'—')} ${o.tracking_id?'· <span class="mono">'+esc(o.tracking_id)+'</span>':''}</span></div>
+      <div class="drow"><span class="k">Confirmation #</span><span class="mono">${esc(o.confirmation_number||'—')}</span></div>
+      <div class="drow"><span class="k">Estimated Total</span><span class="mono">${money(t.est)}</span></div>
+      ${o.notes?`<div class="drow"><span class="k">Notes</span><span>${esc(o.notes)}</span></div>`:''}
+      <div class="section-lb">Items <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">check off received quantities</span></div>
+      ${itemsHtml}
+      <div class="section-lb">Attachments</div>
+      <div id="attList"><div class="sub">Loading…</div></div>
+    </div>
+    <div class="mfoot">
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="downloadPO('${o.id}')">⬇ PDF</button>
+        <button class="btn sub" onclick="emailPO('${o.id}')">✉ Email PO</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        ${next?`<button class="btn ok" onclick="advance('${o.id}','${next.key}')">→ ${next.label}</button>`:''}
+        <button class="btn primary" onclick="openOrder(state.orders.find(x=>x.id==='${o.id}'))">✏ Edit</button>
+      </div>
+    </div>`);
+  loadAttachments(o.id);
+}
+async function setReceived(itemId,val,max){
+  const q=Math.min(Number(val)||0,max);
+  const {error}=await sb.from('order_items').update({received_qty:q}).eq('id',itemId);
+  if(error){toast('Update failed');return;}
+  const o=state.orders.find(x=>(x.items||[]).some(i=>i.id===itemId));
+  if(o){ const it=o.items.find(i=>i.id===itemId); if(it) it.received_qty=q; }
+  toast('Received qty updated');
+}
+async function advance(id,next){
+  const {error}=await sb.from('orders').update({status:next,updated_at:new Date().toISOString()}).eq('id',id);
+  if(error){toast('Failed: '+error.message);return;}
+  closeModal(); toast('Moved to '+(STATUS_MAP[next]?.label||next)); await loadAll();
+}
+
+/* ---------- Attachments (Supabase Storage) ---------- */
+async function loadAttachments(orderId){
+  const box=document.querySelector('#attList'); if(!box) return;
+  const {data,error}=await sb.from('attachments').select('*').eq('order_id',orderId).order('created_at');
+  if(error){box.innerHTML='<div class="sub">Attachments table not set up yet.</div>';return;}
+  if(!data.length){box.innerHTML='<div class="sub">No files attached.</div>';return;}
+  box.innerHTML = data.map(a=>`<div class="att"><span>📎 ${esc(a.file_name||'file')}</span>
+    <span><button class="linkbtn" onclick="openAttachment('${esc(a.file_path)}')">Open</button>
+    <button class="adel" onclick="deleteAttachment('${a.id}','${esc(a.file_path)}','${orderId}')">✕</button></span></div>`).join('');
+}
+async function uploadAttachment(orderId){
+  const f=el('fFile').files[0]; if(!f) return;
+  const path=`${orderId}/${Date.now()}_${f.name.replace(/[^\w.\-]/g,'_')}`;
+  const up=await sb.storage.from('attachments').upload(path,f);
+  if(up.error){toast('Upload failed: '+up.error.message);return;}
+  const ins=await sb.from('attachments').insert({order_id:orderId,file_path:path,file_name:f.name});
+  if(ins.error){toast('Saved file, record failed');}
+  el('fFile').value=''; toast('File attached'); loadAttachments(orderId);
+}
+async function openAttachment(path){
+  const {data,error}=await sb.storage.from('attachments').createSignedUrl(path,3600);
+  if(error){toast('Could not open file');return;}
+  window.open(data.signedUrl,'_blank');
+}
+async function deleteAttachment(id,path,orderId){
+  if(!confirm('Remove this attachment?')) return;
+  await sb.storage.from('attachments').remove([path]);
+  await sb.from('attachments').delete().eq('id',id);
+  toast('Attachment removed'); loadAttachments(orderId);
+}
+
+/* ---------- Suppliers ---------- */
+function openSuppliers(){
+  modal(`<div class="mhead"><h2>Suppliers</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="grid2">
+        <div class="field"><label>Name</label><input id="supName" placeholder="Supplier name"/></div>
+        <div class="field"><label>Our account # with them</label><input id="supAcct" placeholder="e.g. 48213 (optional)"/></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Contact</label><input id="supContact"/></div>
+        <div class="field"><label>Email</label><input id="supEmail" placeholder="orders@supplier.com"/></div>
+      </div>
+      <div class="field"><label>Phone</label><input id="supPhone"/></div>
+      <button class="btn primary" onclick="addSupplier()">＋ Add supplier</button>
+      <div class="section-lb">Current <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">tap one to edit</span></div>
+      <div id="supList"></div>
+    </div>
+    <div class="mfoot"><span></span><button class="btn sub" onclick="closeModal()">Done</button></div>`);
+  renderSupList();
+}
+function renderSupList(){
+  const box=el('supList'); if(!box)return;
+  box.innerHTML = state.suppliers.length? state.suppliers.map(s=>`<div class="att" style="cursor:pointer" onclick="editSupplier('${s.id}')">
+    <span><strong>${esc(s.name)}</strong>${s.customer_number?` <span class="sub">· acct ${esc(s.customer_number)}</span>`:''}${s.email?' · '+esc(s.email):''}</span>
+    <button class="adel" onclick="event.stopPropagation();delSupplier('${s.id}')">✕</button></div>`).join('') : '<div class="sub">None yet.</div>';
+}
+async function addSupplier(){
+  const name=el('supName').value.trim(); if(!name){toast('Name required');return;}
+  const {error}=await sb.from('suppliers').insert({name,phone:el('supPhone').value.trim()||null,
+    contact:el('supContact').value.trim()||null,email:el('supEmail').value.trim()||null,
+    customer_number:el('supAcct').value.trim()||null});
+  if(error){toast('Failed: '+error.message);return;}
+  el('supName').value=el('supPhone').value=el('supContact').value=el('supEmail').value=el('supAcct').value='';
+  const {data}=await sb.from('suppliers').select('*').order('name'); state.suppliers=data||[];
+  renderSupList(); toast('Supplier added');
+}
+function editSupplier(id){
+  const s=state.suppliers.find(x=>x.id===id); if(!s) return;
+  modal(`<div class="mhead"><h2>Edit Supplier</h2><button class="x" onclick="openSuppliers()">✕</button></div>
+    <div class="mbody">
+      <div class="field"><label>Name</label><input id="esName" value="${esc(s.name||'')}"/></div>
+      <div class="grid2">
+        <div class="field"><label>Our account # with them</label><input id="esAcct" value="${esc(s.customer_number||'')}" placeholder="prints on their PO"/></div>
+        <div class="field"><label>Phone</label><input id="esPhone" value="${esc(s.phone||'')}"/></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Contact</label><input id="esContact" value="${esc(s.contact||'')}"/></div>
+        <div class="field"><label>Email</label><input id="esEmail" value="${esc(s.email||'')}" placeholder="orders@supplier.com"/></div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn warn" onclick="delSupplier('${s.id}')">Delete</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="openSuppliers()">Back</button>
+        <button class="btn primary" onclick="saveSupplier('${s.id}')">Save</button>
+      </div>
+    </div>`);
+}
+async function saveSupplier(id){
+  const rec={name:el('esName').value.trim(),customer_number:el('esAcct').value.trim()||null,
+    phone:el('esPhone').value.trim()||null,contact:el('esContact').value.trim()||null,email:el('esEmail').value.trim()||null};
+  if(!rec.name){toast('Name required');return;}
+  const {error}=await sb.from('suppliers').update(rec).eq('id',id);
+  if(error){toast('Save failed: '+error.message);return;}
+  const {data}=await sb.from('suppliers').select('*').order('name'); state.suppliers=data||[];
+  toast('Supplier updated'); render(); openSuppliers();
+}
+async function delSupplier(id){
+  if(!confirm('Remove supplier?'))return;
+  await sb.from('suppliers').delete().eq('id',id);
+  const {data}=await sb.from('suppliers').select('*').order('name'); state.suppliers=data||[];
+  renderSupList(); render();
+}
+
+/* ---------- Builds / Units ---------- */
+function openBuilds(){
+  modal(`<div class="mhead"><h2>Units / Builds</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <p class="sub" style="margin-top:0">Link parts orders to the truck or remount they're for.</p>
+      <div class="grid2">
+        <div class="field"><label>Unit / Build name</label><input id="bName" placeholder="e.g. RP-90 Remount"/></div>
+        <div class="field"><label>Customer</label><input id="bCust"/></div>
+      </div>
+      <div class="field"><label>Notes</label><input id="bNotes"/></div>
+      <button class="btn primary" onclick="addBuild()">＋ Add unit</button>
+      <div class="section-lb">Current</div>
+      <div id="bList"></div>
+    </div>
+    <div class="mfoot"><span></span><button class="btn sub" onclick="closeModal()">Done</button></div>`);
+  renderBuildList();
+}
+function renderBuildList(){
+  const box=el('bList'); if(!box)return;
+  box.innerHTML = state.builds.length? state.builds.map(b=>{
+    const cnt=state.orders.filter(o=>o.build_id===b.id).length;
+    return `<div class="att"><span><strong>${esc(b.name)}</strong>${b.customer?' · '+esc(b.customer):''}
+      <span class="sub">(${cnt} order${cnt===1?'':'s'})</span></span>
+      <button class="adel" onclick="delBuild('${b.id}')">✕</button></div>`;
+  }).join('') : '<div class="sub">None yet.</div>';
+}
+async function addBuild(){
+  const name=el('bName').value.trim(); if(!name){toast('Name required');return;}
+  const {error}=await sb.from('builds').insert({name,customer:el('bCust').value.trim()||null,notes:el('bNotes').value.trim()||null});
+  if(error){toast('Failed: '+error.message);return;}
+  el('bName').value=el('bCust').value=el('bNotes').value='';
+  const {data}=await sb.from('builds').select('*').order('created_at',{ascending:false}); state.builds=data||[];
+  renderBuildList(); toast('Unit added');
+}
+async function delBuild(id){
+  if(!confirm('Remove this unit? Orders stay but lose the link.'))return;
+  await sb.from('builds').delete().eq('id',id);
+  const {data}=await sb.from('builds').select('*').order('created_at',{ascending:false}); state.builds=data||[];
+  renderBuildList(); await loadAll();
+}
+
+/* ---------- Packing slips ---------- */
+function openSlip(){
+  const opts=state.orders.map(o=>`<option value="${o.id}">${esc(o.po_number||'(no PO)')} — ${esc(o.supplier?.name||'')}</option>`).join('');
+  modal(`<div class="mhead"><h2>Add Packing Slip</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="field"><label>Linked Order / PO <span class="req">*</span></label><select id="psOrder"><option value="">— Link to order —</option>${opts}</select></div>
+      <div class="grid2">
+        <div class="field"><label>Packing Slip #</label><input id="psNum"/></div>
+        <div class="field"><label>Date Received</label><input id="psDate" type="date" value="${today()}"/></div>
+      </div>
+      <div class="field"><label>Supplier</label><input id="psSup"/></div>
+      <div class="field"><label>Notes</label><textarea id="psNotes"></textarea></div>
+    </div>
+    <div class="mfoot"><span></span><div style="display:flex;gap:8px">
+      <button class="btn sub" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="saveSlip()">Save slip</button></div></div>`);
+}
+async function saveSlip(){
+  const order_id=el('psOrder').value||null;
+  const {error}=await sb.from('packing_slips').insert({order_id,slip_number:el('psNum').value.trim()||null,
+    supplier:el('psSup').value.trim()||null,date_received:el('psDate').value||null,notes:el('psNotes').value.trim()||null});
+  if(error){toast('Failed: '+error.message);return;}
+  closeModal(); toast('Packing slip saved'); await loadAll(); setTab('packing');
+}
+
+/* ---------- CSV export ---------- */
+function exportCSV(){
+  const rows=[['PO','Supplier','Unit','Status','Order Date','Expected','Carrier','Tracking','Qty','Estimated']];
+  filteredOrders().forEach(o=>{const t=orderTotals(o);
+    rows.push([o.po_number||'',o.supplier?.name||'',o.build?.name||'',o.status,o.order_date||'',o.expected_date||'',
+      o.carrier||'',o.tracking_id||'',t.qty,t.est]);});
+  const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download=`promedic_orders_${today()}.csv`; a.click();
+  toast('CSV exported');
+}
+
+/* ---------- Print PO ---------- */
+/* ---------- PDF Purchase Order ---------- */
+function buildPO(id){
+  const o = state.orders.find(x=>x.id===id); if(!o) return null;
+  const sup = state.suppliers.find(s=>s.id===o.supplier_id) || {};
+  const t = orderTotals(o);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'letter' });
+  const navy=[14,32,56], amber=[240,165,0], muted=[91,107,130];
+  const M=48; let y=54;
+
+  // Header band
+  doc.setFillColor(...navy); doc.rect(0,0,doc.internal.pageSize.getWidth(),4,'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.setTextColor(...navy);
+  doc.text(CUSTOMER_NAME, M, y);
+  doc.setFontSize(11); doc.setTextColor(...muted); doc.setFont('helvetica','normal');
+  doc.text('Purchase Order', M, y+16);
+  // amber rule
+  doc.setDrawColor(...amber); doc.setLineWidth(2); doc.line(M, y+26, doc.internal.pageSize.getWidth()-M, y+26);
+
+  // Meta (right side)
+  const RX = doc.internal.pageSize.getWidth()-M;
+  doc.setFontSize(10); let my=y-8;
+  const metaLine=(label,valLabelBold)=>{ doc.setTextColor(...muted); doc.setFont('helvetica','normal');
+    doc.text(label, RX-170, my); doc.setTextColor(...navy); doc.setFont('helvetica','bold');
+    doc.text(String(valLabelBold||'—'), RX, my, {align:'right'}); my+=15; };
+  metaLine('PO #', o.po_number||'—');
+  metaLine('Date', fmtDate(o.order_date));
+  if (sup.customer_number) metaLine('Our Account #', sup.customer_number);
+  if (o.build?.name) metaLine('Unit / Build', o.build.name);
+
+  y += 48;
+  // Supplier block
+  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...muted);
+  doc.text('SUPPLIER', M, y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(12); doc.setTextColor(...navy);
+  doc.text(sup.name || o.supplier?.name || '—', M, y+16);
+  doc.setFontSize(10); doc.setTextColor(...muted); let sy=y+31;
+  if (sup.contact){ doc.text('Attn: '+sup.contact, M, sy); sy+=13; }
+  if (sup.email){ doc.text(sup.email, M, sy); sy+=13; }
+  if (sup.phone){ doc.text(sup.phone, M, sy); sy+=13; }
+  y = Math.max(sy, y+40) + 6;
+
+  // Items table
+  const rows = (o.items||[]).map(i=>[
+    i.sku||'', i.description||'',
+    String(i.qty||0), money(i.unit_price), money((Number(i.qty)||0)*(Number(i.unit_price)||0))
+  ]);
+  doc.autoTable({
+    startY: y,
+    head: [['SKU','Description','Qty','Unit','Total']],
+    body: rows.length?rows:[['','No items','','','']],
+    theme:'grid',
+    headStyles:{ fillColor:navy, textColor:255, fontStyle:'bold', fontSize:9 },
+    bodyStyles:{ fontSize:9, textColor:[30,40,60] },
+    columnStyles:{ 2:{halign:'center',cellWidth:44}, 3:{halign:'right',cellWidth:64}, 4:{halign:'right',cellWidth:70} },
+    margin:{ left:M, right:M },
+  });
+  let ey = doc.lastAutoTable.finalY + 16;
+  doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...navy);
+  doc.text('Estimated Total:  '+money(t.est), RX, ey, {align:'right'});
+
+  if (o.notes){ ey+=24; doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...muted);
+    doc.text('NOTES', M, ey); doc.setFont('helvetica','normal'); doc.setTextColor(30,40,60);
+    doc.text(doc.splitTextToSize(o.notes, doc.internal.pageSize.getWidth()-M*2), M, ey+13); }
+
+  // Footer credit
+  doc.setFontSize(8); doc.setTextColor(...muted);
+  doc.text('Prepared with Piercy Software', M, doc.internal.pageSize.getHeight()-28);
+
+  return { doc, o, sup, filename:`PO_${(o.po_number||o.id.slice(0,6)).replace(/[^\w.\-]/g,'_')}.pdf` };
+}
+function downloadPO(id){
+  const r = buildPO(id); if(!r){ toast('Could not build PO'); return; }
+  r.doc.save(r.filename); toast('PDF downloaded');
+}
+function emailPO(id){
+  const r = buildPO(id); if(!r){ toast('Could not build PO'); return; }
+  r.doc.save(r.filename); // download first so it's ready to attach
+  const to = r.sup.email || '';
+  const subj = `Purchase Order ${r.o.po_number||''} — ${CUSTOMER_NAME}`.trim();
+  const acct = r.sup.customer_number ? `\nOur account #: ${r.sup.customer_number}` : '';
+  const body = `Hello${r.sup.contact?' '+r.sup.contact:''},\n\nPlease find our purchase order ${r.o.po_number||''} attached (PDF just downloaded — attach it to this email).${acct}\n\nThank you,\n${CUSTOMER_NAME}`;
+  window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+  toast('PDF downloaded — attach it to the email draft');
+}
+
+/* ====================== AUTH / BOOT ====================== */
+async function signIn(){
+  const email=el('liEmail').value.trim(), password=el('liPass').value;
+  el('loginErr').classList.add('hide');
+  const {error}=await sb.auth.signInWithPassword({email,password});
+  if(error){ el('loginErr').textContent=error.message; el('loginErr').classList.remove('hide'); }
+}
+async function signOut(){ await sb.auth.signOut(); location.reload(); }
+
+function applyDark(on){
+  document.body.classList.toggle('dark', on);
+  const b=el('darkBtn'); if(b) b.textContent = on ? '☀️' : '🌙';
+}
+function toggleDark(){
+  const on = !document.body.classList.contains('dark');
+  localStorage.setItem('pmc_dark', on ? '1' : '0');
+  applyDark(on);
+}
+
+function showApp(session){
+  el('loginView').classList.add('hide');
+  el('appView').classList.remove('hide');
+  el('syncDot').classList.add('on'); el('syncTxt').textContent='Synced';
+  loadAll();
+}
+function showLogin(){
+  el('appView').classList.add('hide');
+  el('loginView').classList.remove('hide');
+  el('loginLogo').innerHTML=LOGO_SVG;
+  el('loginCust').textContent = CUSTOMER_NAME;
+  applyDark(localStorage.getItem('pmc_dark')==='1');
+}
+
+async function boot(){
+  el('hdrLogo').innerHTML=LOGO_SVG;
+  applyDark(localStorage.getItem('pmc_dark')==='1');
+  el('hdrCust').textContent = 'Order Tracker · ' + CUSTOMER_NAME;
+  if(!SUPABASE_URL || SUPABASE_URL.includes('YOUR_')){ el('cfgBanner').classList.remove('hide'); return; }
+  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  el('liBtn').addEventListener('click',signIn);
+  el('liPass').addEventListener('keydown',e=>{if(e.key==='Enter')signIn();});
+  const {data:{session}} = await sb.auth.getSession();
+  session ? showApp(session) : showLogin();
+  sb.auth.onAuthStateChange((_e,s)=> s ? showApp(s) : showLogin());
+}
+
+/* ======================================================================
+   ⬇⬇⬇  PASTE YOUR SUPABASE CREDENTIALS HERE  ⬇⬇⬇
+   Supabase dashboard → Project Settings → API
+   ====================================================================== */
+const SUPABASE_URL      = "https://dhnowfdvtxlbcdvnobzz.supabase.co";      // e.g. https://abcdxyz.supabase.co
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobm93ZmR2dHhsYmNkdm5vYnp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0ODE4MTIsImV4cCI6MjEwMjA1NzgxMn0.J_mDKl8pwqgeK626XBuQFAdDu25qHJLUOVzvuJmFpxI";  // the "anon / public" key (safe for the browser)
+
+/* Customer name — shows under the Piercy Software logo and on printed POs.
+   Change this one line for each customer you set up. */
+const CUSTOMER_NAME = "Promedic Ambulance Upfitters";
+/* ==================================================================== */
+
+boot();
+</script>
+</body>
+</html>
