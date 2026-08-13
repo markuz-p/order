@@ -217,6 +217,7 @@ tbody tr:last-child td{border-bottom:none}
 
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:12px 20px;border-radius:10px;font-size:13.5px;font-weight:600;z-index:80;box-shadow:0 8px 30px rgba(0,0,0,.3);opacity:0;transition:opacity .2s,transform .2s}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+.toast .undoBtn{margin-left:14px;background:var(--amber);color:#12233f;border:none;border-radius:6px;padding:4px 11px;font-weight:700;cursor:pointer;font-size:12.5px}
 
 @media(max-width:860px){
   .rail{grid-template-columns:repeat(3,1fr)}
@@ -319,6 +320,7 @@ tbody tr:last-child td{border-bottom:none}
           <input id="searchBox" placeholder="Search PO, supplier, unit, part, tracking…" oninput="render()" />
         </div>
         <button class="fchip" onclick="exportCSV()">⭳ Export CSV</button>
+        <button class="fchip" onclick="exportBackup()" title="Download a full backup of all your data">⤓ Backup</button>
       </div>
       <div class="panel">
         <table>
@@ -425,6 +427,35 @@ const money0 = n => '$'+Math.round(Number(n)||0).toLocaleString('en-US');
 const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
 const today = () => new Date().toISOString().slice(0,10);
 function toast(msg){const t=el('toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200);}
+let _undo=null;
+function undoToast(msg, restoreFn, ms=9000){
+  const t=el('toast');
+  t.innerHTML=`<span>${esc(msg)}</span><button class="undoBtn" onclick="doUndo()">Undo</button>`;
+  t.classList.add('show'); clearTimeout(t._t); _undo=restoreFn;
+  t._t=setTimeout(()=>{ t.classList.remove('show'); _undo=null; }, ms);
+}
+async function doUndo(){
+  const fn=_undo; _undo=null;
+  const t=el('toast'); clearTimeout(t._t); t.classList.remove('show');
+  if(!fn) return;
+  try{ await fn(); toast('Restored'); }
+  catch(e){ toast('Couldn\'t undo: '+(e.message||e)); }
+}
+async function exportBackup(){
+  toast('Preparing backup…');
+  try{
+    const tables=['suppliers','builds','orders','order_items','packing_slips','parts','attachments','app_settings'];
+    const dump={ app:'Piercy Order Tracker', version:1, exported_at:new Date().toISOString(), tables:{} };
+    for(const t of tables){
+      const {data,error}=await sb.from(t).select('*');
+      dump.tables[t]= error ? {error:error.message} : (data||[]);
+    }
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([JSON.stringify(dump,null,2)],{type:'application/json'}));
+    a.download=`order_tracker_backup_${today()}.json`; a.click();
+    toast('Backup downloaded');
+  }catch(e){ toast('Backup failed: '+(e.message||e)); }
+}
 function timeAgo(ts){ if(!ts) return '—'; const d=(Date.now()-new Date(ts))/1000;
   if(d<60)return 'just now'; if(d<3600)return Math.floor(d/60)+'m ago'; if(d<86400)return Math.floor(d/3600)+'h ago';
   return Math.floor(d/86400)+'d ago'; }
@@ -637,11 +668,11 @@ async function savePart(){
 }
 async function deletePart(id){
   if(!confirm('Delete this part from the catalog? Orders that used it are not affected.')) return;
-  const p = state.parts.find(x=>x.id===id);
+  const {data:p}=await sb.from('parts').select('*').eq('id',id).maybeSingle();
   const {error} = await sb.from('parts').delete().eq('id',id);
   if(error){ toast('Delete failed: '+error.message); return; }
-  if(p?.photo_path) sb.storage.from('part-photos').remove([p.photo_path]);
-  closeModal(); toast('Part deleted'); await loadAll(); setTab('parts');
+  closeModal(); await loadAll(); setTab('parts');
+  undoToast('Part deleted', async ()=>{ if(p) await sb.from('parts').insert(p); await loadAll(); setTab('parts'); });
 }
 
 /* ---------- Catalog picker (used inside the order modal) ---------- */
@@ -870,10 +901,17 @@ async function saveOrder(){
   closeModal(); toast(state.editing?'Order updated':'Order created'); await loadAll();
 }
 async function deleteOrder(id){
-  if(!confirm('Delete this order and its line items? This cannot be undone.')) return;
+  if(!confirm('Delete this order and its line items?\n(You can Undo for a few seconds after.)')) return;
+  const {data:ord}=await sb.from('orders').select('*').eq('id',id).maybeSingle();
+  const {data:items}=await sb.from('order_items').select('*').eq('order_id',id);
   const {error}=await sb.from('orders').delete().eq('id',id);
   if(error){toast('Delete failed: '+error.message);return;}
-  closeModal(); toast('Order deleted'); await loadAll();
+  closeModal(); await loadAll();
+  undoToast('Order deleted', async ()=>{
+    if(ord) await sb.from('orders').insert(ord);
+    if(items && items.length) await sb.from('order_items').insert(items);
+    await loadAll();
+  });
 }
 
 /* ---------- Order detail ---------- */
@@ -1034,9 +1072,17 @@ async function saveSupplier(id){
 }
 async function delSupplier(id){
   if(!confirm('Remove supplier?'))return;
+  const {data:s}=await sb.from('suppliers').select('*').eq('id',id).maybeSingle();
+  const affected=state.orders.filter(o=>o.supplier_id===id).map(o=>o.id);
   await sb.from('suppliers').delete().eq('id',id);
   const {data}=await sb.from('suppliers').select('*').order('name'); state.suppliers=data||[];
   renderSupList(); render();
+  undoToast('Supplier removed', async ()=>{
+    if(s) await sb.from('suppliers').insert(s);
+    if(affected.length) await sb.from('orders').update({supplier_id:id}).in('id',affected);
+    const {data}=await sb.from('suppliers').select('*').order('name'); state.suppliers=data||[];
+    renderSupList(); await loadAll();
+  });
 }
 
 /* ---------- Company Settings (branding) ---------- */
@@ -1145,9 +1191,17 @@ async function addBuild(){
 }
 async function delBuild(id){
   if(!confirm('Remove this unit? Orders stay but lose the link.'))return;
+  const {data:b}=await sb.from('builds').select('*').eq('id',id).maybeSingle();
+  const affected=state.orders.filter(o=>o.build_id===id).map(o=>o.id);
   await sb.from('builds').delete().eq('id',id);
   const {data}=await sb.from('builds').select('*').order('created_at',{ascending:false}); state.builds=data||[];
   renderBuildList(); await loadAll();
+  undoToast('Unit removed', async ()=>{
+    if(b) await sb.from('builds').insert(b);
+    if(affected.length) await sb.from('orders').update({build_id:id}).in('id',affected);
+    const {data}=await sb.from('builds').select('*').order('created_at',{ascending:false}); state.builds=data||[];
+    renderBuildList(); await loadAll();
+  });
 }
 
 /* ---------- Packing slips ---------- */
