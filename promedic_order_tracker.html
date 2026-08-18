@@ -154,6 +154,14 @@ tbody tr:last-child td{border-bottom:none}
 .bcard .lb{font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.04em;font-size:11.5px;color:var(--muted)}
 .bcard .amt{font-family:Oswald,sans-serif;font-weight:700;font-size:30px;margin:6px 0 2px}
 .bcard .sb{font-size:12px;color:var(--muted)}
+.tr-row{display:flex;align-items:center;gap:12px;padding:7px 0}
+.tr-row + .tr-row{border-top:1px solid var(--line)}
+.tr-lb{flex:0 0 130px;font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr-bar{flex:1;height:12px;background:var(--line);border-radius:999px;overflow:hidden}
+.tr-fill{height:100%;background:var(--navy);border-radius:999px}
+body.dark .tr-fill{background:var(--amber)}
+.tr-val{flex:0 0 118px;text-align:right;font-size:13px;color:var(--ink)}
+.tr-share{display:inline-block;min-width:32px;margin-left:8px;color:var(--muted);font-size:11.5px}
 
 /* ---------- Modal ---------- */
 .overlay{position:fixed;inset:0;background:rgba(14,32,56,.55);backdrop-filter:blur(2px);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow-y:auto}
@@ -310,6 +318,7 @@ tbody tr:last-child td{border-bottom:none}
       <button class="tab" data-tab="parts" onclick="setTab('parts')"><span class="ico">🔩</span> Parts</button>
       <button class="tab" data-tab="packing" onclick="setTab('packing')"><span class="ico">📦</span> Packing Slips</button>
       <button class="tab" data-tab="billing" onclick="setTab('billing')"><span class="ico">💲</span> Billing</button>
+      <button class="tab" data-tab="trends" onclick="setTab('trends')"><span class="ico">📊</span> Trends</button>
     </div>
 
     <!-- ORDERS TAB -->
@@ -387,6 +396,24 @@ tbody tr:last-child td{border-bottom:none}
         </table>
         <div class="empty hide" id="billEmpty"><h3>Nothing received yet</h3><p>Received orders show up here as billing history.</p></div>
       </div>
+    </section>
+
+    <!-- TRENDS TAB -->
+    <section id="tab-trends" class="hide">
+      <div class="bill-grid">
+        <div class="bcard"><div class="lb">Total Spend</div><div class="amt mono" id="trTotal">$0</div><div class="sb" id="trWinLbl">Last 12 months</div></div>
+        <div class="bcard"><div class="lb">Orders</div><div class="amt mono" id="trCount">0</div><div class="sb">Placed (excludes cancelled)</div></div>
+        <div class="bcard"><div class="lb">Top Vendor</div><div class="amt" id="trTop" style="font-size:20px">—</div><div class="sb" id="trTopSb">—</div></div>
+      </div>
+      <div class="section-lb">Spend by Vendor
+        <span>
+          <button class="fchip on" id="trw12" onclick="setTrendWin('12')">12 mo</button>
+          <button class="fchip" id="trwall" onclick="setTrendWin('all')">All time</button>
+        </span>
+      </div>
+      <div class="panel" style="padding:14px 16px"><div id="trVendors"></div></div>
+      <div class="section-lb">Spend by Month</div>
+      <div class="panel" style="padding:14px 16px"><div id="trMonths"></div></div>
     </section>
   </main>
 </div>
@@ -532,7 +559,7 @@ function render(){
         </div></div>`;
     }).join('');
   }
-  renderSlips(); renderBilling(); renderParts();
+  renderSlips(); renderBilling(); renderParts(); renderTrends();
 }
 
 /* ---------- Render: packing slips ---------- */
@@ -568,9 +595,67 @@ function renderBilling(){
 }
 
 /* ---------- Tabs / filters ---------- */
+/* ---------- Spending & vendor trends ---------- */
+function trendSpend(){
+  const win = state.trendWin || '12';
+  let cutoff = null;
+  if(win==='12'){ const d=new Date(); d.setMonth(d.getMonth()-11); d.setDate(1); cutoff=d.toISOString().slice(0,10); }
+  const byVendor={}, byMonth={}; let total=0, count=0;
+  for(const o of state.orders){
+    if(o.status==='cancelled') continue;
+    const d = (o.order_date || (o.created_at||'').slice(0,10) || '').slice(0,10);
+    if(!d) continue;
+    if(cutoff && d < cutoff) continue;
+    const est = orderTotals(o).est;
+    const vn = o.supplier?.name || 'No supplier';
+    byVendor[vn] = (byVendor[vn]||0) + est;
+    const m = d.slice(0,7);
+    byMonth[m] = (byMonth[m]||0) + est;
+    total += est; count++;
+  }
+  return { byVendor, byMonth, total, count };
+}
+function trBarRow(label, val, max, total){
+  const pct = max ? Math.round(val/max*100) : 0;
+  const share = total ? Math.round(val/total*100) : 0;
+  return `<div class="tr-row">
+    <div class="tr-lb" title="${esc(label)}">${esc(label)}</div>
+    <div class="tr-bar"><div class="tr-fill" style="width:${pct}%"></div></div>
+    <div class="tr-val mono">${money0(val)}<span class="tr-share">${share}%</span></div>
+  </div>`;
+}
+function trMonthLabel(m){ const names=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const [y,mo]=m.split('-'); return names[Number(mo)-1]+" '"+y.slice(2); }
+function renderTrends(){
+  if(!el('tab-trends')) return;
+  const {byVendor,byMonth,total,count}=trendSpend();
+  el('trTotal').textContent = money0(total);
+  el('trCount').textContent = count;
+  el('trWinLbl').textContent = (state.trendWin==='all') ? 'All time' : 'Last 12 months';
+
+  const vlist = Object.entries(byVendor).sort((a,b)=>b[1]-a[1]);
+  const vmax = vlist.length ? vlist[0][1] : 0;
+  if(vlist.length){ el('trTop').textContent=vlist[0][0];
+    el('trTopSb').textContent = money0(vlist[0][1]) + (total?' · '+Math.round(vlist[0][1]/total*100)+'% of spend':''); }
+  else { el('trTop').textContent='—'; el('trTopSb').textContent='—'; }
+  el('trVendors').innerHTML = vlist.length
+    ? vlist.map(([n,v])=>trBarRow(n,v,vmax,total)).join('')
+    : `<div class="sub" style="padding:8px 2px">No spend in this period.</div>`;
+
+  const mkeys = Object.keys(byMonth).sort();
+  const mmax = mkeys.length ? Math.max(...mkeys.map(k=>byMonth[k])) : 0;
+  el('trMonths').innerHTML = mkeys.length
+    ? mkeys.map(m=>trBarRow(trMonthLabel(m), byMonth[m], mmax, total)).join('')
+    : `<div class="sub" style="padding:8px 2px">No spend in this period.</div>`;
+}
+function setTrendWin(w){ state.trendWin=w;
+  el('trw12').classList.toggle('on', w==='12'); el('trwall').classList.toggle('on', w==='all');
+  renderTrends();
+}
+
 function setTab(t){ state.tab=t;
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
-  ['orders','parts','packing','billing'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
+  ['orders','parts','packing','billing','trends'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
 }
 function setFilter(k){ state.filter = state.filter===k?'all':k; render(); }
 
