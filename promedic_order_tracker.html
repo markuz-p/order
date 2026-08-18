@@ -185,6 +185,8 @@ body.dark .tr-fill{background:var(--amber)}
 .li input{padding:8px 9px;font-size:13px;border:1px solid var(--line);border-radius:8px;width:100%}
 .li .lidel{border:none;background:#fbeceb;color:var(--danger);border-radius:8px;height:36px;font-size:16px}
 .li-head{display:grid;grid-template-columns:1fr 2fr 62px 88px 88px 34px;gap:8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-family:Oswald,sans-serif;margin-bottom:6px}
+.li-total{text-align:right;font-size:13px;color:var(--muted);padding:6px 40px 2px 0}
+.li-total strong{color:var(--ink);font-size:15px;margin-left:6px}
 .recv-row{display:grid;grid-template-columns:1fr 2fr 62px 88px 88px 34px;gap:8px;align-items:center;margin-bottom:8px;font-size:13px}
 .recv-row .rq{display:flex;align-items:center;gap:6px}
 .recv-row .rq input{width:56px;padding:6px;border:1px solid var(--line);border-radius:7px;text-align:center}
@@ -896,8 +898,12 @@ function modal(html){ el('modalRoot').innerHTML=`<div class="overlay" onclick="i
 function openOrder(o=null){
   state.editing = o;
   state.lineItems = o ? (o.items||[]).map(i=>({...i})) : [{sku:'',description:'',qty:1,unit_price:0,received_qty:0}];
-  const supOpts = state.suppliers.map(s=>`<option value="${s.id}" ${o&&o.supplier_id===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
-  const bldOpts = state.builds.map(b=>`<option value="${b.id}" ${o&&o.build_id===b.id?'selected':''}>${esc(b.name)}</option>`).join('');
+  const lastSup = localStorage.getItem('pmc_last_supplier')||'';
+  const lastBld = localStorage.getItem('pmc_last_build')||'';
+  const selSup = o ? o.supplier_id : lastSup;
+  const selBld = o ? o.build_id : lastBld;
+  const supOpts = state.suppliers.map(s=>`<option value="${s.id}" ${selSup&&selSup===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+  const bldOpts = state.builds.map(b=>`<option value="${b.id}" ${selBld&&selBld===b.id?'selected':''}>${esc(b.name)}</option>`).join('');
   const stOpts = [...STATUSES,STATUS_MAP.cancelled].map(s=>`<option value="${s.key}" ${o&&o.status===s.key?'selected':(!o&&s.key==='needed'?'selected':'')}>${s.label}</option>`).join('');
   const carOpts = CARRIERS.map(c=>`<option ${o&&o.carrier===c?'selected':''}>${c}</option>`).join('');
   modal(`
@@ -929,6 +935,7 @@ function openOrder(o=null){
       <div class="section-lb">Parts / Items <span><button class="linkbtn" onclick="openPartPicker()"><span class="ico">🔩</span> From Catalog</button> &nbsp; <button class="linkbtn" onclick="addLine()">＋ Blank Row</button></span></div>
       <div class="li-head"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Recv'd</span><span></span></div>
       <div id="lineItems"></div>
+      <div class="li-total">Items total: <strong class="mono" id="liTotal">$0.00</strong></div>
 
       <div class="section-lb">Attachments <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">quotes, packing slips, photos</span></div>
       <div id="attList">${o?'<div class="sub">Loading…</div>':'<div class="sub">Save the order first to attach files.</div>'}</div>
@@ -944,20 +951,32 @@ function openOrder(o=null){
       </div>
     </div>`);
   renderLines();
+  updateLiTotal();
   if(o) loadAttachments(o.id);
+  else setTimeout(()=>el('fSupplier')?.focus(), 60);
 }
 function renderLines(){
   el('lineItems').innerHTML = state.lineItems.map((it,i)=>`<div class="li">
-    <input value="${esc(it.sku||'')}" placeholder="SKU" oninput="setLine(${i},'sku',this.value)"/>
-    <input value="${esc(it.description||'')}" placeholder="Description" oninput="setLine(${i},'description',this.value)"/>
-    <input class="mono" type="number" min="0" value="${it.qty??1}" oninput="setLine(${i},'qty',this.value)"/>
-    <input class="mono" type="number" min="0" step="0.01" value="${it.unit_price??0}" oninput="setLine(${i},'unit_price',this.value)"/>
+    <input value="${esc(it.sku||'')}" placeholder="SKU" oninput="setLine(${i},'sku',this.value)" onkeydown="lineKey(event,${i})"/>
+    <input value="${esc(it.description||'')}" placeholder="Description" oninput="setLine(${i},'description',this.value)" onkeydown="lineKey(event,${i})"/>
+    <input class="mono" type="number" min="0" value="${it.qty??1}" oninput="setLine(${i},'qty',this.value)" onkeydown="lineKey(event,${i})"/>
+    <input class="mono" type="number" min="0" step="0.01" value="${it.unit_price??0}" oninput="setLine(${i},'unit_price',this.value)" onkeydown="lineKey(event,${i})"/>
     <input class="mono" type="number" min="0" value="${it.received_qty??0}" oninput="setLine(${i},'received_qty',this.value)"/>
     <button class="lidel" onclick="delLine(${i})">✕</button></div>`).join('');
+  updateLiTotal();
 }
-function addLine(){ state.lineItems.push({sku:'',description:'',qty:1,unit_price:0,received_qty:0}); renderLines(); }
-function delLine(i){ state.lineItems.splice(i,1); if(!state.lineItems.length)addLine(); renderLines(); }
-function setLine(i,k,v){ state.lineItems[i][k] = (k==='sku'||k==='description')?v:parseFloat(v||0); }
+function focusRow(i){ const rows=el('lineItems').querySelectorAll('.li'); rows[i]?.querySelector('input')?.focus(); }
+function addLine(){ state.lineItems.push({sku:'',description:'',qty:1,unit_price:0,received_qty:0}); renderLines(); focusRow(state.lineItems.length-1); }
+function delLine(i){ state.lineItems.splice(i,1); if(!state.lineItems.length)addLine(); else renderLines(); }
+function setLine(i,k,v){ state.lineItems[i][k] = (k==='sku'||k==='description')?v:parseFloat(v||0); if(k==='qty'||k==='unit_price') updateLiTotal(); }
+function lineKey(e,i){
+  if(e.key!=='Enter') return;
+  e.preventDefault();
+  if(i>=state.lineItems.length-1) addLine();      // last row → make a new one
+  else focusRow(i+1);                              // else jump to next row
+}
+function liItemsTotal(){ return state.lineItems.reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.unit_price)||0),0); }
+function updateLiTotal(){ const t=el('liTotal'); if(t) t.textContent=money(liItemsTotal()); }
 
 async function saveOrder(){
   const supplier_id = el('fSupplier').value;
@@ -984,6 +1003,8 @@ async function saveOrder(){
     .map(i=>({order_id:orderId,sku:i.sku||null,description:i.description||null,
       qty:Number(i.qty)||0,unit_price:Number(i.unit_price)||0,received_qty:Number(i.received_qty)||0}));
   if(items.length){ const {error}=await sb.from('order_items').insert(items); if(error)toast('Items error: '+error.message); }
+  localStorage.setItem('pmc_last_supplier', rec.supplier_id||'');
+  localStorage.setItem('pmc_last_build', rec.build_id||'');
   closeModal(); toast(state.editing?'Order updated':'Order created'); await loadAll();
 }
 async function deleteOrder(id){
