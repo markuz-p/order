@@ -120,6 +120,7 @@ tbody tr:last-child td{border-bottom:none}
 .pcard .pf{display:flex;justify-content:space-between;align-items:baseline;margin-top:7px}
 .pcard .pf .cost{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:13px}
 .pcard .pf .cat{font-size:10.5px;background:#eef2f8;color:var(--muted);padding:2px 7px;border-radius:5px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em}
+.linep{font-size:10.5px;background:var(--navy);color:#fff;padding:2px 7px;border-radius:5px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em}
 
 /* photo upload box */
 .photobox{display:flex;gap:12px;align-items:center}
@@ -358,6 +359,12 @@ body.dark .tr-fill{background:var(--amber)}
         </div>
         <button class="pill ghost" onclick="openBulkParts()" style="color:var(--ink)">⇪ Bulk Add</button>
         <button class="pill amber" onclick="openPart()" style="color:#3a2800">＋ Add Part</button>
+      </div>
+      <div id="partLineChips" style="display:flex;gap:8px;margin:-6px 0 14px">
+        <button class="fchip on" data-ln="all" onclick="setPartLine('all')">All</button>
+        <button class="fchip" data-ln="RP-90" onclick="setPartLine('RP-90')">RP-90</button>
+        <button class="fchip" data-ln="AEV" onclick="setPartLine('AEV')">AEV</button>
+        <button class="fchip" data-ln="Common" onclick="setPartLine('Common')">Common</button>
       </div>
       <div class="parts-grid" id="partsGrid"></div>
       <div class="empty hide" id="partsEmpty">
@@ -662,11 +669,18 @@ function setTab(t){ state.tab=t;
 function setFilter(k){ state.filter = state.filter===k?'all':k; render(); }
 
 /* ====================== PARTS CATALOG ====================== */
+const PART_LINES = ['RP-90','AEV','Common'];
 function filteredParts(){
   const q = (el('partSearch')?.value||'').toLowerCase().trim();
   let list = state.parts;
-  if(q) list = list.filter(p=>[p.sku,p.description,p.category,p.supplier?.name].join(' ').toLowerCase().includes(q));
+  const ln = state.partLine||'all';
+  if(ln!=='all') list = list.filter(p=>(p.line||'')===ln);
+  if(q) list = list.filter(p=>[p.sku,p.description,p.category,p.supplier?.name,p.line].join(' ').toLowerCase().includes(q));
   return list;
+}
+function setPartLine(l){ state.partLine=l;
+  document.querySelectorAll('#partLineChips .fchip').forEach(b=>b.classList.toggle('on', b.dataset.ln===l));
+  renderParts();
 }
 function renderParts(){
   const grid = el('partsGrid'); if(!grid) return;
@@ -682,6 +696,7 @@ function renderParts(){
         <div class="pm">${esc(p.sku||'—')}${p.supplier?.name?' · '+esc(p.supplier.name):''}</div>
         <div class="pf">
           <span class="cost">${p.cost?money(p.cost):'—'}</span>
+          ${p.line?`<span class="linep">${esc(p.line)}</span>`:''}
           ${p.category?`<span class="cat">${esc(p.category)}</span>`:''}
         </div>
       </div></div>`;
@@ -715,8 +730,10 @@ function openPart(p=null){
       <div class="grid2">
         <div class="field"><label>Category</label><input id="pCat" list="catList" value="${esc(p?.category||'')}" />
           <datalist id="catList">${cats.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
-        <div class="field"><label>Supplier</label><select id="pSupplier"><option value="">— None —</option>${supOpts}</select></div>
+        <div class="field"><label>Product line</label>
+          <select id="pLine">${PART_LINES.map(l=>`<option ${(p?.line||'RP-90')===l?'selected':''}>${l}</option>`).join('')}</select></div>
       </div>
+      <div class="field"><label>Supplier</label><select id="pSupplier"><option value="">— None —</option>${supOpts}</select></div>
       <div class="field"><label>Notes</label><textarea id="pNotes">${esc(p?.notes||'')}</textarea></div>
     </div>
     <div class="mfoot">
@@ -744,6 +761,7 @@ async function savePart(){
     description: desc, sku: el('pSku').value.trim()||null,
     cost: el('pCost').value?parseFloat(el('pCost').value):null,
     category: el('pCat').value.trim()||null,
+    line: el('pLine').value||null,
     supplier_id: el('pSupplier').value||null,
     notes: el('pNotes').value.trim()||null,
     photo_path: _partPhoto.path||null,
@@ -764,8 +782,14 @@ async function deletePart(id){
 }
 
 /* ---------- Catalog picker (used inside the order modal) ---------- */
+let _pickLine = 'all';
 function openPartPicker(){
   if(!state.parts.length){ toast('No parts in the catalog yet — add some in the Parts tab'); return; }
+  // default the picker to the order's unit line, if the unit has one
+  const bid = el('fBuild')?.value;
+  const b = bid ? state.builds.find(x=>x.id===bid) : null;
+  _pickLine = (b && b.line) ? b.line : 'all';
+  const chip = (ln,label)=>`<button class="fchip ${_pickLine===ln?'on':''}" data-pl="${ln}" onclick="setPickLine('${ln}')">${label}</button>`;
   el('pickerRoot').innerHTML = `
     <div class="picker-overlay" onclick="if(event.target===this)closePartPicker()">
       <div class="picker">
@@ -773,25 +797,37 @@ function openPartPicker(){
           <input id="pickSearch" placeholder="Search the catalog…" oninput="renderPicker()" autofocus />
           <button class="x" onclick="closePartPicker()">✕</button>
         </div>
+        <div id="pickChips" style="display:flex;gap:8px;padding:0 14px 10px">
+          ${chip('all','All')}${chip('RP-90','RP-90')}${chip('AEV','AEV')}${chip('Common','Common')}
+        </div>
         <div class="ph-list" id="pickList"></div>
       </div>
     </div>`;
   renderPicker();
   setTimeout(()=>el('pickSearch')?.focus(), 50);
 }
+function setPickLine(l){ _pickLine=l;
+  document.querySelectorAll('#pickChips .fchip').forEach(b=>b.classList.toggle('on', b.dataset.pl===l));
+  renderPicker();
+}
 function renderPicker(){
   const q = (el('pickSearch')?.value||'').toLowerCase().trim();
   let list = state.parts;
+  if(_pickLine!=='all'){
+    // show the chosen line, plus shared "Common" parts and any untagged part
+    list = list.filter(p=> !p.line || p.line===_pickLine || p.line==='Common');
+    if(_pickLine==='Common') list = state.parts.filter(p=>p.line==='Common' || !p.line);
+  }
   if(q) list = list.filter(p=>[p.sku,p.description,p.category,p.supplier?.name].join(' ').toLowerCase().includes(q));
   el('pickList').innerHTML = list.map(p=>{
     const url = partPhotoUrl(p.photo_path);
     const thumb = url?`<img src="${url}">`:'<span class="noimg">—</span>';
     return `<div class="prow" onclick="pickPart('${p.id}')">
       <div class="thumb">${thumb}</div>
-      <div class="info"><div class="d">${esc(p.description||'Part')}</div><div class="s">${esc(p.sku||'—')}${p.supplier?.name?' · '+esc(p.supplier.name):''}</div></div>
+      <div class="info"><div class="d">${esc(p.description||'Part')}</div><div class="s">${esc(p.sku||'—')}${p.line?' · '+esc(p.line):''}${p.supplier?.name?' · '+esc(p.supplier.name):''}</div></div>
       <div class="pc">${p.cost?money(p.cost):''}</div>
     </div>`;
-  }).join('') || '<div class="sub" style="padding:16px">No matches.</div>';
+  }).join('') || '<div class="sub" style="padding:16px">No matches in this line.</div>';
 }
 function pickPart(id){
   const p = state.parts.find(x=>x.id===id); if(!p) return;
@@ -809,8 +845,8 @@ function parseMoney(v){ if(v==null) return null; const n=parseFloat(String(v).re
 function parseBulk(text){
   return text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).map(line=>{
     const cols = line.includes('\t') ? line.split('\t') : line.split(',');
-    const [description,sku,category,supplier,cost] = cols.map(c=>(c||'').trim());
-    return { description, sku, category, supplier, cost:parseMoney(cost) };
+    const [description,sku,category,ln,supplier,cost] = cols.map(c=>(c||'').trim());
+    return { description, sku, category, line:ln, supplier, cost:parseMoney(cost) };
   }).filter(r=>r.description);
 }
 function openBulkParts(){
@@ -819,9 +855,10 @@ function openBulkParts(){
     <div class="mbody">
       <div class="section-lb" style="border-top:none;padding-top:0;margin-top:0">Step 1 · Paste part info</div>
       <p class="sub" style="margin-top:0">In your spreadsheet, put columns in this order, then copy the rows and paste below:</p>
-      <p class="sub" style="font-family:'IBM Plex Mono',monospace;background:#eef2f8;padding:8px 10px;border-radius:8px;color:var(--ink)">Description &nbsp;|&nbsp; SKU &nbsp;|&nbsp; Category &nbsp;|&nbsp; Supplier &nbsp;|&nbsp; Cost</p>
+      <p class="sub" style="font-family:'IBM Plex Mono',monospace;background:#eef2f8;padding:8px 10px;border-radius:8px;color:var(--ink)">Description &nbsp;|&nbsp; SKU &nbsp;|&nbsp; Category &nbsp;|&nbsp; Line &nbsp;|&nbsp; Supplier &nbsp;|&nbsp; Cost</p>
+      <p class="sub" style="margin-top:-4px">Line is RP-90, AEV, or Common. Leave it blank if unsure — you can set it later.</p>
       <button class="linkbtn" onclick="downloadPartTemplate()">⬇ Download a blank spreadsheet template</button>
-      <textarea id="bulkText" style="width:100%;min-height:120px;margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:10px;border:1px solid var(--line);border-radius:9px" placeholder="900 Super LED Scene Light	9SC0ENZR	Lights & Warning	Whelen	222.09"></textarea>
+      <textarea id="bulkText" style="width:100%;min-height:120px;margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:10px;border:1px solid var(--line);border-radius:9px" placeholder="900 Super LED Scene Light	9SC0ENZR	Lights & Warning	RP-90	Whelen	222.09"></textarea>
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn sub" onclick="previewBulk()">Preview</button>
         <button class="btn primary" onclick="importBulk()">Import parts</button>
@@ -836,7 +873,7 @@ function openBulkParts(){
     <div class="mfoot"><span></span><button class="btn sub" onclick="closeModal()">Done</button></div>`);
 }
 function downloadPartTemplate(){
-  const csv = 'Description,SKU,Category,Supplier,Cost\n"900 Super LED Scene Light",9SC0ENZR,Lights & Warning,Whelen,222.09\n';
+  const csv = 'Description,SKU,Category,Line,Supplier,Cost\n"900 Super LED Scene Light",9SC0ENZR,Lights & Warning,RP-90,Whelen,222.09\n';
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download='parts_template.csv'; a.click();
 }
@@ -859,7 +896,7 @@ async function importBulk(){
     const {data}=await sb.from('suppliers').select('id,name'); (data||[]).forEach(s=>map[(s.name||'').toLowerCase()]=s.id);
   }
   const recs=rows.map(r=>({description:r.description,sku:r.sku||null,category:r.category||null,
-    supplier_id:map[(r.supplier||'').toLowerCase()]||null,cost:r.cost}));
+    line:r.line||null,supplier_id:map[(r.supplier||'').toLowerCase()]||null,cost:r.cost}));
   const ins=await sb.from('parts').insert(recs);
   if(ins.error){ el('bulkPreview').innerHTML='<span style="color:var(--danger)">Import failed: '+esc(ins.error.message)+'</span>'; return; }
   el('bulkText').value='';
@@ -1269,9 +1306,13 @@ function openBuilds(){
       <p class="sub" style="margin-top:0">Link parts orders to the truck or remount they're for.</p>
       <div class="grid2">
         <div class="field"><label>Unit / Build name</label><input id="bName" placeholder="e.g. RP-90 Remount"/></div>
-        <div class="field"><label>Customer</label><input id="bCust"/></div>
+        <div class="field"><label>Product line</label>
+          <select id="bLine">${PART_LINES.map(l=>`<option ${l==='RP-90'?'selected':''}>${l}</option>`).join('')}</select></div>
       </div>
-      <div class="field"><label>Notes</label><input id="bNotes"/></div>
+      <div class="grid2">
+        <div class="field"><label>Customer</label><input id="bCust"/></div>
+        <div class="field"><label>Notes</label><input id="bNotes"/></div>
+      </div>
       <button class="btn primary" onclick="addBuild()">＋ Add unit</button>
       <div class="section-lb">Current</div>
       <div id="bList"></div>
@@ -1283,16 +1324,16 @@ function renderBuildList(){
   const box=el('bList'); if(!box)return;
   box.innerHTML = state.builds.length? state.builds.map(b=>{
     const cnt=state.orders.filter(o=>o.build_id===b.id).length;
-    return `<div class="att"><span><strong>${esc(b.name)}</strong>${b.customer?' · '+esc(b.customer):''}
+    return `<div class="att"><span><strong>${esc(b.name)}</strong>${b.line?' <span class="linep">'+esc(b.line)+'</span>':''}${b.customer?' · '+esc(b.customer):''}
       <span class="sub">(${cnt} order${cnt===1?'':'s'})</span></span>
       <button class="adel" onclick="delBuild('${b.id}')">✕</button></div>`;
   }).join('') : '<div class="sub">None yet.</div>';
 }
 async function addBuild(){
   const name=el('bName').value.trim(); if(!name){toast('Name required');return;}
-  const {error}=await sb.from('builds').insert({name,customer:el('bCust').value.trim()||null,notes:el('bNotes').value.trim()||null});
+  const {error}=await sb.from('builds').insert({name,line:el('bLine').value||null,customer:el('bCust').value.trim()||null,notes:el('bNotes').value.trim()||null});
   if(error){toast('Failed: '+error.message);return;}
-  el('bName').value=el('bCust').value=el('bNotes').value='';
+  el('bName').value=el('bCust').value=el('bNotes').value=''; el('bLine').value='RP-90';
   const {data}=await sb.from('builds').select('*').order('created_at',{ascending:false}); state.builds=data||[];
   renderBuildList(); toast('Unit added');
 }
