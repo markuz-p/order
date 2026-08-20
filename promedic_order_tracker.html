@@ -197,6 +197,34 @@ body.dark .tr-fill{background:var(--amber)}
 .att a{color:var(--brand);text-decoration:none;font-weight:600}
 .att .adel{border:none;background:transparent;color:var(--danger);font-size:15px}
 
+/* receiving mode (phone-friendly full screen) */
+.recv-wrap{position:fixed;inset:0;background:var(--bg);z-index:75;display:flex;flex-direction:column}
+.recv-head{display:flex;align-items:center;gap:12px;padding:16px;background:var(--navy);color:#fff;position:sticky;top:0}
+.recv-head h2{font-family:Oswald,sans-serif;font-size:19px;margin:0;flex:1;line-height:1.15}
+.recv-head .rh-sub{font-size:12px;opacity:.8;font-weight:400}
+.recv-head button{background:rgba(255,255,255,.15);border:none;color:#fff;border-radius:9px;padding:10px 14px;font-size:15px;font-weight:700;cursor:pointer}
+.recv-body{flex:1;overflow-y:auto;padding:14px;max-width:640px;width:100%;margin:0 auto}
+.recv-search{width:100%;padding:14px;border:1px solid var(--line);border-radius:11px;font-size:16px;margin-bottom:12px;background:var(--surface);color:var(--ink)}
+.recv-card{display:block;width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:15px;margin-bottom:11px;cursor:pointer}
+.recv-card .rc-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.recv-card .rc-po{font-size:16px;font-weight:700;color:var(--ink)}
+.recv-card .rc-badge{font-size:11px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em;color:#fff;background:var(--sc,#888);padding:3px 9px;border-radius:20px}
+.recv-card .rc-sup{font-size:15px;color:var(--ink);margin-top:5px;font-weight:600}
+.recv-card .rc-meta{font-size:13px;color:var(--muted);margin-top:2px}
+.recv-card .rc-prog{font-size:13px;font-weight:700;color:var(--brand);margin-top:8px}
+.ritem{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:13px;margin-bottom:10px}
+.ritem .ri-desc{flex:1;min-width:0}
+.ritem .ri-desc strong{display:block;font-size:15px;color:var(--ink)}
+.ritem .ri-desc .sub{font-size:12px}
+.ri-ctrl{display:flex;align-items:center;gap:8px}
+.stepbtn{width:42px;height:42px;border-radius:11px;border:1px solid var(--line);background:var(--bg);font-size:22px;font-weight:700;color:var(--ink);cursor:pointer;line-height:1}
+.ri-q{min-width:52px;text-align:center;font-size:15px;font-weight:700}
+.recvtog{height:42px;padding:0 14px;border-radius:11px;border:2px solid var(--brand);background:transparent;color:var(--brand);font-weight:800;font-size:14px;cursor:pointer;min-width:56px}
+.recvtog.on{background:var(--ok,#1c8b4b);border-color:var(--ok,#1c8b4b);color:#fff}
+.recv-actionbar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:12px 14px;display:flex;gap:10px;max-width:640px;margin:0 auto;width:100%}
+.recv-actionbar .btn{flex:1;padding:15px;font-size:15px;border-radius:12px}
+.recv-bigbtn{width:100%;padding:15px;border-radius:12px;border:1px dashed var(--line);background:var(--bg);color:var(--ink);font-size:15px;font-weight:700;cursor:pointer;margin-bottom:12px}
+
 .mfoot{display:flex;gap:10px;justify-content:space-between;align-items:center;padding:16px 22px;border-top:1px solid var(--line);position:sticky;bottom:0;background:#fff;border-radius:0 0 16px 16px;flex-wrap:wrap}
 .btn{border:none;border-radius:10px;padding:11px 18px;font-weight:600;font-size:14px}
 .btn.primary{background:var(--brand);color:#fff}
@@ -310,6 +338,7 @@ body.dark .tr-fill{background:var(--amber)}
         <button class="pill ghost" onclick="toggleDark()" id="darkBtn" title="Toggle dark mode">🌙</button>
         <button class="pill ghost" onclick="openSettings()" title="Company settings">⚙ Settings</button>
         <button class="pill ghost" onclick="signOut()">Sign out</button>
+        <button class="pill ghost" onclick="openReceive()" title="Receiving mode (phone-friendly)"><span class="ico">📦</span> Receive</button>
         <button class="pill amber" onclick="openOrder()">＋ New Order</button>
       </div>
     </div>
@@ -429,6 +458,7 @@ body.dark .tr-fill{background:var(--amber)}
 
 <div id="modalRoot"></div>
 <div id="pickerRoot"></div>
+<div id="recvRoot"></div>
 <div id="toast" class="toast"></div>
 
 <script>
@@ -1239,6 +1269,121 @@ async function advance(id,next){
   if(error){toast('Failed: '+error.message);return;}
   closeModal(); toast('Moved to '+(STATUS_MAP[next]?.label||next)); await loadAll();
 }
+
+/* ---------- Receiving mode (phone-friendly) ---------- */
+function recvProgress(o){ const items=o.items||[];
+  const tot=items.reduce((a,i)=>a+(Number(i.qty)||0),0);
+  const rec=items.reduce((a,i)=>a+Math.min(Number(i.received_qty)||0,Number(i.qty)||0),0);
+  return {rec,tot}; }
+function recvOrders(){
+  let list=state.orders.filter(o=>o.status!=='received'&&o.status!=='cancelled');
+  const q=(el('recvSearch')?.value||'').toLowerCase().trim();
+  if(q) list=list.filter(o=>[o.po_number,o.supplier?.name,o.build?.name,o.tracking_id].join(' ').toLowerCase().includes(q));
+  const rank={shipped:0,submitted:1,awaiting:2,quoted:3,needed:4};
+  return list.sort((a,b)=>(rank[a.status]??9)-(rank[b.status]??9) || (a.expected_date||'').localeCompare(b.expected_date||''));
+}
+function openReceive(){
+  el('recvRoot').innerHTML=`
+    <div class="recv-wrap">
+      <div class="recv-head">
+        <h2>Receiving<div class="rh-sub">Tap an order that's arriving</div></h2>
+        <button onclick="closeReceive()">Done</button>
+      </div>
+      <div class="recv-body">
+        <input id="recvSearch" class="recv-search" placeholder="Search PO, supplier, unit, tracking…" oninput="renderRecvList()" />
+        <div id="recvList"></div>
+      </div>
+    </div>`;
+  renderRecvList();
+}
+function renderRecvList(){
+  const box=el('recvList'); if(!box) return;
+  const list=recvOrders();
+  if(!list.length){ box.innerHTML='<div class="sub" style="padding:20px;text-align:center">No open orders to receive.</div>'; return; }
+  box.innerHTML=list.map(o=>{
+    const st=STATUS_MAP[o.status]||STATUS_MAP.needed; const {rec,tot}=recvProgress(o);
+    return `<button class="recv-card" onclick="openRecvOrder('${o.id}')">
+      <div class="rc-top"><span class="rc-po mono">${esc(o.po_number||'(no PO#)')}</span>
+        <span class="rc-badge" style="--sc:var(${st.varc})">${st.label}</span></div>
+      <div class="rc-sup">${esc(o.supplier?.name||'—')}</div>
+      <div class="rc-meta">${o.build?.name?esc(o.build.name)+' · ':''}${o.expected_date?'Exp '+fmtDate(o.expected_date):'No date'}</div>
+      <div class="rc-prog">${rec}/${tot} received</div>
+    </button>`;
+  }).join('');
+}
+function openRecvOrder(id){ state.recvOrderId=id; renderRecvDetail(); }
+function renderRecvDetail(){
+  const o=state.orders.find(x=>x.id===state.recvOrderId); if(!o){ openReceive(); return; }
+  const items=o.items||[];
+  const itemsHtml = items.length ? items.map(i=>{
+    const rq=Number(i.received_qty)||0, full=rq>=Number(i.qty)&&Number(i.qty)>0;
+    return `<div class="ritem">
+      <div class="ri-desc"><strong>${esc(i.description||'Item')}</strong><span class="sub mono">${esc(i.sku||'')}</span></div>
+      <div class="ri-ctrl">
+        <button class="stepbtn" onclick="recvSetQty('${i.id}',${rq-1})">−</button>
+        <span class="ri-q mono">${rq}/${i.qty}</span>
+        <button class="stepbtn" onclick="recvSetQty('${i.id}',${rq+1})">＋</button>
+        <button class="recvtog ${full?'on':''}" onclick="recvToggle('${i.id}')">${full?'✓':'All'}</button>
+      </div></div>`;
+  }).join('') : '<div class="sub">No line items on this order.</div>';
+  el('recvRoot').innerHTML=`
+    <div class="recv-wrap">
+      <div class="recv-head">
+        <button onclick="openReceive()">‹ Back</button>
+        <h2>${esc(o.po_number||'Order')}<div class="rh-sub">${esc(o.supplier?.name||'—')}${o.build?.name?' · '+esc(o.build.name):''}</div></h2>
+      </div>
+      <div class="recv-body">
+        <button class="recv-bigbtn" onclick="recvReceiveAll()">✓ Mark all items received</button>
+        ${itemsHtml}
+        <button class="recv-bigbtn" style="margin-top:6px" onclick="el('recvPhotoInput').click()"><span class="ico">📷</span> Add packing slip photo</button>
+        <input id="recvPhotoInput" type="file" accept="image/*" capture="environment" style="display:none" onchange="recvUpload()" />
+        <div id="recvSlipLog" class="sub" style="text-align:center"></div>
+      </div>
+      <div class="recv-actionbar">
+        <button class="btn sub" onclick="openReceive()">Back to list</button>
+        <button class="btn ok" onclick="recvMarkReceived()">Mark order Received</button>
+      </div>
+    </div>`;
+}
+async function recvSetQty(itemId,val){
+  const o=state.orders.find(x=>x.id===state.recvOrderId); if(!o) return;
+  const it=(o.items||[]).find(i=>i.id===itemId); if(!it) return;
+  const q=Math.max(0,Math.min(Number(val)||0,Number(it.qty)||0));
+  it.received_qty=q; renderRecvDetail();                       // optimistic UI
+  const {error}=await sb.from('order_items').update({received_qty:q}).eq('id',itemId);
+  if(error) toast('Save failed — check connection');
+}
+function recvToggle(itemId){
+  const o=state.orders.find(x=>x.id===state.recvOrderId); if(!o) return;
+  const it=(o.items||[]).find(i=>i.id===itemId); if(!it) return;
+  const full=(Number(it.received_qty)||0)>=Number(it.qty);
+  recvSetQty(itemId, full?0:Number(it.qty)||0);
+}
+async function recvReceiveAll(){
+  const o=state.orders.find(x=>x.id===state.recvOrderId); if(!o) return;
+  for(const it of (o.items||[])) it.received_qty=Number(it.qty)||0;
+  renderRecvDetail();
+  const updates=(o.items||[]).map(it=>sb.from('order_items').update({received_qty:Number(it.qty)||0}).eq('id',it.id));
+  const res=await Promise.all(updates);
+  if(res.some(r=>r.error)) toast('Some items didn\'t save — check connection'); else toast('All items marked received');
+}
+async function recvUpload(){
+  const inp=el('recvPhotoInput'); const f=inp.files&&inp.files[0]; if(!f) return;
+  const orderId=state.recvOrderId;
+  el('recvSlipLog').textContent='Uploading photo…';
+  const path=`${orderId}/${Date.now()}_${f.name.replace(/[^\w.\-]/g,'_')}`;
+  const up=await sb.storage.from('attachments').upload(path,f);
+  if(up.error){ el('recvSlipLog').innerHTML='<span style="color:var(--danger)">Upload failed: '+esc(up.error.message)+'</span>'; return; }
+  await sb.from('attachments').insert({order_id:orderId,file_path:path,file_name:f.name||'packing-slip.jpg'});
+  inp.value=''; el('recvSlipLog').innerHTML='<span style="color:var(--ok)">✓ Packing slip photo attached</span>'; toast('Photo attached');
+}
+async function recvMarkReceived(){
+  const o=state.orders.find(x=>x.id===state.recvOrderId); if(!o) return;
+  const {error}=await sb.from('orders').update({status:'received',updated_at:new Date().toISOString()}).eq('id',o.id);
+  if(error){ toast('Failed: '+error.message); return; }
+  toast('Order marked Received'); await loadAll(); openReceive();
+}
+function closeReceive(){ el('recvRoot').innerHTML=''; state.recvOrderId=null; render(); }
 
 /* ---------- Attachments (Supabase Storage) ---------- */
 async function loadAttachments(orderId){
