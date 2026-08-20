@@ -840,6 +840,130 @@ function pickPart(id){
 }
 function closePartPicker(){ el('pickerRoot').innerHTML=''; }
 
+/* ---------- Quote → order (read a vendor PDF, pull line items) ---------- */
+let _pdfjsLoading=null;
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if(_pdfjsLoading) return _pdfjsLoading;
+  _pdfjsLoading = new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+    s.onload=()=>{ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'; res(window.pdfjsLib); }catch(e){ rej(e); } };
+    s.onerror=()=>rej(new Error('Could not load the PDF reader (check your internet).'));
+    document.head.appendChild(s);
+  });
+  return _pdfjsLoading;
+}
+async function pdfToLines(arrbuf){
+  const pdfjs=await loadPdfJs();
+  const pdf=await pdfjs.getDocument({data:arrbuf}).promise;
+  const lines=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    const page=await pdf.getPage(p);
+    const tc=await page.getTextContent();
+    const rows={};
+    tc.items.forEach(it=>{
+      if(!it.str || !it.str.trim()) return;
+      const y=Math.round(it.transform[5]/2)*2;      // bucket y so one visual line groups together
+      (rows[y]=rows[y]||[]).push({x:it.transform[4], str:it.str});
+    });
+    Object.keys(rows).map(Number).sort((a,b)=>b-a).forEach(k=>{
+      const text=rows[k].sort((a,b)=>a.x-b.x).map(i=>i.str).join(' ').replace(/\s+/g,' ').trim();
+      if(text) lines.push(text);
+    });
+  }
+  return lines;
+}
+function parseQuote(lines){
+  const moneyRe=/\$?\s?\d{1,3}(?:,\d{3})*\.\d{2}/g;
+  const out=[];
+  for(const raw of lines){
+    const line=(raw||'').replace(/\s+/g,' ').trim();
+    if(!line) continue;
+    if(/^(sub\s*total|total|tax(es)?|shipping|freight|handling|balance|amount due|grand total|quote|quotation|page\b|terms|remit|thank|purchase order|p\.?o\.?\b)/i.test(line)) continue;
+    const prices=(line.match(moneyRe)||[]).map(s=>parseFloat(s.replace(/[^0-9.]/g,''))).filter(n=>!isNaN(n));
+    if(!prices.length) continue;                    // a real line item has a price
+    const ints=(line.match(/\b\d{1,4}\b/g)||[]).map(Number);
+    let qty=null, unit=null;
+    if(prices.length>=2){                            // qty × unit ≈ extended → strongest signal
+      outer:
+      for(const q of ints){ if(q<=0) continue;
+        for(const u of prices){ for(const e of prices){ if(u===e) continue;
+          if(Math.abs(q*u-e)<=Math.max(0.02,e*0.01)){ qty=q; unit=u; break outer; } } } }
+    }
+    if(unit===null) unit=prices[0];
+    if(qty===null){ const m=line.match(/^\s*(\d{1,4})\b/); qty=m?Number(m[1]):1; }
+    let sku='';
+    for(const t of line.split(' ')){ const c=t.replace(/[^0-9A-Za-z\-\/\.]/g,'');
+      if(c.length>=4 && /[A-Za-z]/.test(c) && /\d/.test(c) && !/\.\d{2}$/.test(c)){ sku=c; break; } }
+    let desc=line;
+    (line.match(moneyRe)||[]).forEach(m=>{ desc=desc.replace(m,' '); });
+    if(sku) desc=desc.replace(sku,' ');
+    desc=desc.replace(/^\s*\d{1,4}\b/,' ').replace(/\b(EA|EACH|UNIT|PCS?)\b/ig,' ').replace(/\s+/g,' ').trim();
+    if(desc.length<3 && !sku) continue;
+    out.push({sku, description:desc, qty:qty||1, unit_price:unit||0});
+  }
+  return out;
+}
+let _quoteRows=[];
+function openQuoteImport(){
+  el('pickerRoot').innerHTML=`
+   <div class="picker-overlay" onclick="if(event.target===this)closeQuote()">
+     <div class="picker">
+       <div class="ph-search" style="justify-content:space-between">
+         <strong style="font-size:15px">Import from a vendor quote (PDF)</strong>
+         <button class="x" onclick="closeQuote()">✕</button>
+       </div>
+       <div style="padding:14px">
+         <input id="quoteFile" type="file" accept="application/pdf" onchange="handleQuoteFile(event)" style="font-size:13px"/>
+         <div id="quoteStatus" class="sub" style="margin-top:10px">Choose a PDF quote — I'll pull the line items for you to review before anything is added.</div>
+         <div id="quoteRows" style="margin-top:12px;max-height:44vh;overflow-y:auto"></div>
+       </div>
+       <div class="mfoot" style="padding:12px 14px">
+         <span class="sub" id="quoteCount"></span>
+         <div style="display:flex;gap:8px">
+           <button class="btn sub" onclick="closeQuote()">Cancel</button>
+           <button class="btn primary" id="quoteAddBtn" onclick="addQuoteRows()" disabled>Add to order</button>
+         </div>
+       </div>
+     </div>
+   </div>`;
+}
+function closeQuote(){ el('pickerRoot').innerHTML=''; _quoteRows=[]; }
+async function handleQuoteFile(ev){
+  const f=ev.target.files&&ev.target.files[0]; if(!f) return;
+  el('quoteStatus').textContent='Reading the PDF…';
+  el('quoteRows').innerHTML=''; el('quoteAddBtn').disabled=true; el('quoteCount').textContent='';
+  try{
+    const buf=await f.arrayBuffer();
+    const lines=await pdfToLines(buf);
+    if(!lines.length){ el('quoteStatus').innerHTML='<span style="color:var(--danger)">I couldn\'t find selectable text — this looks like a scanned PDF. You can still enter it by hand.</span>'; return; }
+    _quoteRows=parseQuote(lines).map(r=>({...r, keep:true}));
+    if(!_quoteRows.length){ el('quoteStatus').innerHTML='<span style="color:var(--danger)">I read the PDF but couldn\'t confidently pick out line items. You can add them by hand, or try a different quote.</span>'; return; }
+    el('quoteStatus').textContent='Review what I found — uncheck anything wrong, then add. You can still edit each row on the order after.';
+    renderQuoteRows();
+  }catch(e){ el('quoteStatus').innerHTML='<span style="color:var(--danger)">Couldn\'t read that: '+esc(e.message||e)+'</span>'; }
+}
+function renderQuoteRows(){
+  el('quoteRows').innerHTML = _quoteRows.map((r,i)=>`
+    <label style="display:grid;grid-template-columns:22px 1fr 60px 80px;gap:8px;align-items:center;padding:7px 0;border-top:1px solid var(--line);font-size:13px;cursor:pointer">
+      <input type="checkbox" ${r.keep?'checked':''} onchange="_quoteRows[${i}].keep=this.checked;updateQuoteCount()"/>
+      <span><strong>${esc(r.description||'—')}</strong>${r.sku?'<br><span class="sub mono">'+esc(r.sku)+'</span>':''}</span>
+      <span class="mono">×${r.qty}</span>
+      <span class="mono" style="text-align:right">${r.unit_price?money(r.unit_price):'—'}</span>
+    </label>`).join('');
+  el('quoteAddBtn').disabled=false; updateQuoteCount();
+}
+function updateQuoteCount(){ const n=_quoteRows.filter(r=>r.keep).length;
+  el('quoteCount').textContent=n+' of '+_quoteRows.length+' selected'; el('quoteAddBtn').disabled=!n; }
+function addQuoteRows(){
+  const rows=_quoteRows.filter(r=>r.keep); if(!rows.length) return;
+  if(state.lineItems.length===1){ const l=state.lineItems[0]; if(!l.sku&&!l.description&&!l.unit_price) state.lineItems=[]; }
+  rows.forEach(r=>state.lineItems.push({sku:r.sku||'',description:r.description||'',qty:Number(r.qty)||1,unit_price:Number(r.unit_price)||0,received_qty:0}));
+  renderLines(); closeQuote();
+  toast('Added '+rows.length+' item'+(rows.length>1?'s':'')+' from the quote — review before saving');
+}
+
 /* ---------- Bulk add: paste rows + batch photos by filename ---------- */
 function parseMoney(v){ if(v==null) return null; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
 function parseBulk(text){
@@ -969,7 +1093,7 @@ function openOrder(o=null){
         <div class="field"><label>Estimated Total ($) — blank = auto</label><input id="fEst" type="number" step="0.01" value="${o?.estimated_total||''}" /></div>
       </div>
 
-      <div class="section-lb">Parts / Items <span><button class="linkbtn" onclick="openPartPicker()"><span class="ico">🔩</span> From Catalog</button> &nbsp; <button class="linkbtn" onclick="addLine()">＋ Blank Row</button></span></div>
+      <div class="section-lb">Parts / Items <span><button class="linkbtn" onclick="openQuoteImport()"><span class="ico">📄</span> From Quote</button> &nbsp; <button class="linkbtn" onclick="openPartPicker()"><span class="ico">🔩</span> From Catalog</button> &nbsp; <button class="linkbtn" onclick="addLine()">＋ Blank Row</button></span></div>
       <div class="li-head"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Recv'd</span><span></span></div>
       <div id="lineItems"></div>
       <div class="li-total">Items total: <strong class="mono" id="liTotal">$0.00</strong></div>
