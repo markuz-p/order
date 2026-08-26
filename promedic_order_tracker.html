@@ -265,6 +265,20 @@ body.dark .tr-fill{background:var(--amber)}
 .save-dot{font-size:11.5px;font-weight:700;margin-left:2px}
 .save-dot.saving{color:var(--amber-ink)}
 .save-dot.err{color:var(--danger)}
+.gsearch{position:relative;max-width:660px;margin:0 auto 8px;padding:0 2px}
+.gsearch-box{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:10px 12px}
+.gsearch-box svg{width:16px;height:16px;color:var(--muted);flex:none}
+.gsearch-box input{border:none;outline:none;background:transparent;color:var(--ink);font-size:14px;flex:1;min-width:0}
+.gs-clear{border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:14px}
+.gs-results{position:absolute;left:2px;right:2px;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 34px rgba(0,0,0,.18);z-index:70;max-height:62vh;overflow-y:auto;padding:6px}
+.gs-group{font-family:Oswald,sans-serif;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:9px 10px 3px}
+.gs-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer}
+.gs-item:hover{background:var(--bg)}
+.gs-item .gi-main{min-width:0}
+.gs-item .gi-main strong{font-size:13.5px;color:var(--ink);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gs-item .gi-sub{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gs-item .gi-right{font-size:12px;color:var(--muted);white-space:nowrap;flex:none}
+.gs-empty{padding:14px 10px;color:var(--muted);font-size:13px}
 
 @media(max-width:860px){
   .rail{grid-template-columns:repeat(3,1fr)}
@@ -352,6 +366,14 @@ body.dark .tr-fill{background:var(--amber)}
   </header>
 
   <main>
+    <div class="gsearch" id="gsearchWrap">
+      <div class="gsearch-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        <input id="globalSearch" placeholder="Search everything — orders, parts, suppliers, units…" autocomplete="off" oninput="globalSearchRun()" onfocus="globalSearchRun()" onkeydown="if(event.key==='Escape')clearGlobalSearch()"/>
+        <button id="gsClear" class="gs-clear hide" onclick="clearGlobalSearch()">✕</button>
+      </div>
+      <div id="globalResults" class="gs-results hide"></div>
+    </div>
     <div class="tabs">
       <button class="tab active" data-tab="orders" onclick="setTab('orders')"><span class="ico">📋</span> Orders</button>
       <button class="tab" data-tab="parts" onclick="setTab('parts')"><span class="ico">🔩</span> Parts</button>
@@ -763,6 +785,45 @@ function exportVendorCSV(){
   a.download=`vendor_spend_${state.trendWin==='all'?'all_time':'12mo'}_${today()}.csv`; a.click();
   toast('Vendor spend exported');
 }
+
+function globalSearchRun(){
+  const q=(el('globalSearch').value||'').toLowerCase().trim();
+  const box=el('globalResults'), clr=el('gsClear');
+  if(clr) clr.classList.toggle('hide', !q);
+  if(q.length<2){ box.classList.add('hide'); box.innerHTML=''; return; }
+  const has=s=>String(s||'').toLowerCase().includes(q);
+  const orders=state.orders.filter(o=>[o.po_number,o.supplier?.name,o.build?.name,o.tracking_id,o.notes].some(has)
+      || (o.items||[]).some(i=>has(i.sku)||has(i.description))).slice(0,6);
+  const parts=state.parts.filter(p=>[p.sku,p.description,p.category,p.line,p.supplier?.name].some(has)).slice(0,6);
+  const sups=state.suppliers.filter(s=>[s.name,s.email,s.contact,s.customer_number].some(has)).slice(0,6);
+  const units=state.builds.filter(b=>[b.name,b.customer,b.line].some(has)).slice(0,6);
+  let html='';
+  if(orders.length){ html+='<div class="gs-group">Orders</div>'+orders.map(o=>`
+    <div class="gs-item" onclick="gsOpenOrder('${o.id}')"><div class="gi-main"><strong>${esc(o.po_number||'(no PO#)')}</strong>
+      <div class="gi-sub">${esc(o.supplier?.name||'—')}${o.build?.name?' · '+esc(o.build.name):''}</div></div>
+      <div class="gi-right">${STATUS_MAP[o.status]?.label||o.status} · ${money0(orderTotals(o).est)}</div></div>`).join(''); }
+  if(parts.length){ html+='<div class="gs-group">Parts</div>'+parts.map(p=>`
+    <div class="gs-item" onclick="gsOpenPart('${p.id}')"><div class="gi-main"><strong>${esc(p.description||'Part')}</strong>
+      <div class="gi-sub mono">${esc(p.sku||'—')}${p.line?' · '+esc(p.line):''}</div></div>
+      <div class="gi-right">${p.cost?money0(p.cost):''}</div></div>`).join(''); }
+  if(sups.length){ html+='<div class="gs-group">Suppliers</div>'+sups.map(s=>`
+    <div class="gs-item" onclick="gsOpenSupplier('${s.id}')"><div class="gi-main"><strong>${esc(s.name)}</strong>
+      <div class="gi-sub">${esc(s.email||s.contact||'')}</div></div>
+      <div class="gi-right">${s.customer_number?'acct '+esc(s.customer_number):''}</div></div>`).join(''); }
+  if(units.length){ html+='<div class="gs-group">Units</div>'+units.map(b=>`
+    <div class="gs-item" onclick="gsOpenUnit('${b.id}')"><div class="gi-main"><strong>${esc(b.name)}</strong>
+      <div class="gi-sub">${esc(b.customer||'')}${b.line?' · '+esc(b.line):''}</div></div>
+      <div class="gi-right">${state.orders.filter(o=>o.build_id===b.id).length} orders</div></div>`).join(''); }
+  if(!html) html='<div class="gs-empty">No matches for “'+esc(q)+'”.</div>';
+  box.innerHTML=html; box.classList.remove('hide');
+}
+function closeGlobalResults(){ const b=el('globalResults'); if(b) b.classList.add('hide'); }
+function clearGlobalSearch(){ const i=el('globalSearch'); if(i) i.value=''; closeGlobalResults(); const c=el('gsClear'); if(c) c.classList.add('hide'); }
+function gsOpenOrder(id){ clearGlobalSearch(); viewOrder(id); }
+function gsOpenPart(id){ const p=state.parts.find(x=>x.id===id); clearGlobalSearch(); if(p) openPart(p); }
+function gsOpenSupplier(id){ clearGlobalSearch(); editSupplier(id); }
+function gsOpenUnit(id){ const b=state.builds.find(x=>x.id===id); clearGlobalSearch(); if(!b) return; setTab('orders'); const s=el('searchBox'); if(s) s.value=b.name; render(); }
+document.addEventListener('click',e=>{ const g=el('gsearchWrap'); if(g && !g.contains(e.target)) closeGlobalResults(); });
 
 function setTab(t){ state.tab=t;
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
