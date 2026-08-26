@@ -258,6 +258,13 @@ body.dark .tr-fill{background:var(--amber)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
 .toast .undoBtn{margin-left:14px;background:var(--amber);color:#12233f;border:none;border-radius:6px;padding:4px 11px;font-weight:700;cursor:pointer;font-size:12.5px}
 .ico{filter:grayscale(1)}
+.save-chip{position:fixed;left:16px;bottom:18px;z-index:90;padding:10px 15px;border-radius:11px;font-size:13px;font-weight:700;box-shadow:0 6px 22px rgba(0,0,0,.22);cursor:default;display:flex;align-items:center;gap:8px}
+.save-chip.saving{background:#fff3d6;color:#7a5300}
+.save-chip.err{background:#fde2e2;color:#a01919;cursor:pointer}
+.save-chip.ok{background:#dff3e6;color:#1c6b3f}
+.save-dot{font-size:11.5px;font-weight:700;margin-left:2px}
+.save-dot.saving{color:var(--amber-ink)}
+.save-dot.err{color:var(--danger)}
 
 @media(max-width:860px){
   .rail{grid-template-columns:repeat(3,1fr)}
@@ -447,6 +454,7 @@ body.dark .tr-fill{background:var(--amber)}
         <span>
           <button class="fchip on" id="trw12" onclick="setTrendWin('12')">12 mo</button>
           <button class="fchip" id="trwall" onclick="setTrendWin('all')">All time</button>
+          <button class="fchip" onclick="exportVendorCSV()" title="Download spend by vendor">⭳ CSV</button>
         </span>
       </div>
       <div class="panel" style="padding:14px 16px"><div id="trVendors"></div></div>
@@ -459,6 +467,7 @@ body.dark .tr-fill{background:var(--amber)}
 <div id="modalRoot"></div>
 <div id="pickerRoot"></div>
 <div id="recvRoot"></div>
+<div id="saveChip" class="save-chip hide"></div>
 <div id="toast" class="toast"></div>
 
 <script>
@@ -522,6 +531,55 @@ async function exportBackup(){
     a.download=`order_tracker_backup_${today()}.json`; a.click();
     toast('Backup downloaded');
   }catch(e){ toast('Backup failed: '+(e.message||e)); }
+}
+
+/* ---------- Reliable writes (retry until saved) ----------
+   Every risky save goes through reliableWrite(key, run). If it fails
+   (offline, server error) it retries with backoff and again whenever
+   the connection returns. A persistent chip shows anything unsaved, so
+   a tap never looks successful when it wasn't. Same key = latest wins. */
+const _saves = new Map();
+const _RETRY = [2000,5000,15000,30000];
+function reliableWrite(key, run){
+  const prev=_saves.get(key); if(prev&&prev.timer) clearTimeout(prev.timer);
+  _saves.set(key, {run, tries:0, state:'saving', timer:null});
+  attemptSave(key);
+  scheduleSaveUi();
+}
+async function attemptSave(key){
+  const e=_saves.get(key); if(!e) return;
+  e.state='saving'; e.tries++; scheduleSaveUi();
+  let ok=false, error=null;
+  try{ const r=await e.run(); if(r && r.error) error=r.error; else ok=true; }
+  catch(ex){ error=ex; }
+  if(_saves.get(key)!==e) return;                 // superseded by a newer write
+  if(ok){ _saves.delete(key); }
+  else{
+    e.state='error';
+    const d=_RETRY[Math.min(e.tries-1, _RETRY.length-1)];
+    e.timer=setTimeout(()=>attemptSave(key), d);
+  }
+  scheduleSaveUi();
+}
+function retryAllSaves(){ for(const [key,e] of _saves){ if(e.timer) clearTimeout(e.timer); attemptSave(key); } }
+window.addEventListener('online', retryAllSaves);
+function saveStateFor(key){ return _saves.get(key)?.state || null; }
+let _saveUiTimer=null;
+function scheduleSaveUi(){ if(_saveUiTimer) return; _saveUiTimer=setTimeout(()=>{ _saveUiTimer=null; updateSaveUi(); }, 120); }
+function updateSaveUi(){
+  const chip=el('saveChip'); if(chip){
+    const n=_saves.size;
+    const anyErr=[..._saves.values()].some(e=>e.state==='error');
+    if(n===0){
+      chip.className='save-chip ok'; chip.textContent='✓ All changes saved'; chip.onclick=null;
+      clearTimeout(chip._t); chip._t=setTimeout(()=>chip.classList.add('hide'), 1600);
+    } else if(anyErr){
+      chip.className='save-chip err'; chip.textContent='⚠ '+n+' change'+(n>1?'s':'')+' not saved — tap to retry now'; chip.onclick=retryAllSaves;
+    } else {
+      chip.className='save-chip saving'; chip.innerHTML='⟳ Saving '+n+' change'+(n>1?'s':'')+'…'; chip.onclick=null;
+    }
+  }
+  if(el('recvRoot')?.firstChild && state.recvOrderId) renderRecvDetail();
 }
 function timeAgo(ts){ if(!ts) return '—'; const d=(Date.now()-new Date(ts))/1000;
   if(d<60)return 'just now'; if(d<3600)return Math.floor(d/60)+'m ago'; if(d<86400)return Math.floor(d/3600)+'h ago';
@@ -690,6 +748,20 @@ function renderTrends(){
 function setTrendWin(w){ state.trendWin=w;
   el('trw12').classList.toggle('on', w==='12'); el('trwall').classList.toggle('on', w==='all');
   renderTrends();
+}
+function exportVendorCSV(){
+  const {byVendor,total}=trendSpend();
+  const vlist=Object.entries(byVendor).sort((a,b)=>b[1]-a[1]);
+  if(!vlist.length){ toast('No spend to export in this period'); return; }
+  const win=(state.trendWin==='all')?'All time':'Last 12 months';
+  const rows=[['Vendor','Spend','% of spend','Period']];
+  vlist.forEach(([n,v])=>rows.push([n, v.toFixed(2), (total?Math.round(v/total*100):0)+'%', win]));
+  rows.push(['TOTAL', total.toFixed(2), '100%', win]);
+  const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download=`vendor_spend_${state.trendWin==='all'?'all_time':'12mo'}_${today()}.csv`; a.click();
+  toast('Vendor spend exported');
 }
 
 function setTab(t){ state.tab=t;
@@ -1258,11 +1330,9 @@ function viewOrder(id){
 }
 async function setReceived(itemId,val,max){
   const q=Math.min(Number(val)||0,max);
-  const {error}=await sb.from('order_items').update({received_qty:q}).eq('id',itemId);
-  if(error){toast('Update failed');return;}
   const o=state.orders.find(x=>(x.items||[]).some(i=>i.id===itemId));
   if(o){ const it=o.items.find(i=>i.id===itemId); if(it) it.received_qty=q; }
-  toast('Received qty updated');
+  reliableWrite('recv:'+itemId, ()=>sb.from('order_items').update({received_qty:q}).eq('id',itemId));
 }
 async function advance(id,next){
   const {error}=await sb.from('orders').update({status:next,updated_at:new Date().toISOString()}).eq('id',id);
@@ -1311,14 +1381,18 @@ function renderRecvList(){
     </button>`;
   }).join('');
 }
-function openRecvOrder(id){ state.recvOrderId=id; renderRecvDetail(); }
+let _recvNote='';
+function openRecvOrder(id){ state.recvOrderId=id; _recvNote=''; renderRecvDetail(); }
 function renderRecvDetail(){
   const o=state.orders.find(x=>x.id===state.recvOrderId); if(!o){ openReceive(); return; }
   const items=o.items||[];
   const itemsHtml = items.length ? items.map(i=>{
     const rq=Number(i.received_qty)||0, full=rq>=Number(i.qty)&&Number(i.qty)>0;
+    const ss=saveStateFor('recv:'+i.id);
+    const dot = ss==='saving' ? ' <span class="save-dot saving">saving…</span>'
+              : ss==='error' ? ' <span class="save-dot err">not saved ↻</span>' : '';
     return `<div class="ritem">
-      <div class="ri-desc"><strong>${esc(i.description||'Item')}</strong><span class="sub mono">${esc(i.sku||'')}</span></div>
+      <div class="ri-desc"><strong>${esc(i.description||'Item')}</strong><span class="sub mono">${esc(i.sku||'')}</span>${dot}</div>
       <div class="ri-ctrl">
         <button class="stepbtn" onclick="recvSetQty('${i.id}',${rq-1})">−</button>
         <span class="ri-q mono">${rq}/${i.qty}</span>
@@ -1337,7 +1411,7 @@ function renderRecvDetail(){
         ${itemsHtml}
         <button class="recv-bigbtn" style="margin-top:6px" onclick="el('recvPhotoInput').click()"><span class="ico">📷</span> Add packing slip photo</button>
         <input id="recvPhotoInput" type="file" accept="image/*" capture="environment" style="display:none" onchange="recvUpload()" />
-        <div id="recvSlipLog" class="sub" style="text-align:center"></div>
+        <div id="recvSlipLog" class="sub" style="text-align:center">${_recvNote}</div>
       </div>
       <div class="recv-actionbar">
         <button class="btn sub" onclick="openReceive()">Back to list</button>
@@ -1350,8 +1424,7 @@ async function recvSetQty(itemId,val){
   const it=(o.items||[]).find(i=>i.id===itemId); if(!it) return;
   const q=Math.max(0,Math.min(Number(val)||0,Number(it.qty)||0));
   it.received_qty=q; renderRecvDetail();                       // optimistic UI
-  const {error}=await sb.from('order_items').update({received_qty:q}).eq('id',itemId);
-  if(error) toast('Save failed — check connection');
+  reliableWrite('recv:'+itemId, ()=>sb.from('order_items').update({received_qty:q}).eq('id',itemId));
 }
 function recvToggle(itemId){
   const o=state.orders.find(x=>x.id===state.recvOrderId); if(!o) return;
@@ -1361,27 +1434,28 @@ function recvToggle(itemId){
 }
 async function recvReceiveAll(){
   const o=state.orders.find(x=>x.id===state.recvOrderId); if(!o) return;
-  for(const it of (o.items||[])) it.received_qty=Number(it.qty)||0;
+  for(const it of (o.items||[])){ const q=Number(it.qty)||0; it.received_qty=q;
+    reliableWrite('recv:'+it.id, ()=>sb.from('order_items').update({received_qty:q}).eq('id',it.id)); }
   renderRecvDetail();
-  const updates=(o.items||[]).map(it=>sb.from('order_items').update({received_qty:Number(it.qty)||0}).eq('id',it.id));
-  const res=await Promise.all(updates);
-  if(res.some(r=>r.error)) toast('Some items didn\'t save — check connection'); else toast('All items marked received');
 }
 async function recvUpload(){
   const inp=el('recvPhotoInput'); const f=inp.files&&inp.files[0]; if(!f) return;
   const orderId=state.recvOrderId;
-  el('recvSlipLog').textContent='Uploading photo…';
-  const path=`${orderId}/${Date.now()}_${f.name.replace(/[^\w.\-]/g,'_')}`;
-  const up=await sb.storage.from('attachments').upload(path,f);
-  if(up.error){ el('recvSlipLog').innerHTML='<span style="color:var(--danger)">Upload failed: '+esc(up.error.message)+'</span>'; return; }
-  await sb.from('attachments').insert({order_id:orderId,file_path:path,file_name:f.name||'packing-slip.jpg'});
-  inp.value=''; el('recvSlipLog').innerHTML='<span style="color:var(--ok)">✓ Packing slip photo attached</span>'; toast('Photo attached');
+  const path=`${orderId}/${Date.now()}_${(f.name||'packing-slip.jpg').replace(/[^\w.\-]/g,'_')}`;
+  inp.value='';
+  _recvNote='✓ Packing slip photo added';
+  el('recvSlipLog').innerHTML='<span style="color:var(--ok)">✓ Packing slip photo added</span>';
+  reliableWrite('photo:'+path, async ()=>{
+    const up=await sb.storage.from('attachments').upload(path,f,{upsert:true});
+    if(up.error) return {error:up.error};
+    return await sb.from('attachments').insert({order_id:orderId,file_path:path,file_name:f.name||'packing-slip.jpg'});
+  });
 }
-async function recvMarkReceived(){
+function recvMarkReceived(){
   const o=state.orders.find(x=>x.id===state.recvOrderId); if(!o) return;
-  const {error}=await sb.from('orders').update({status:'received',updated_at:new Date().toISOString()}).eq('id',o.id);
-  if(error){ toast('Failed: '+error.message); return; }
-  toast('Order marked Received'); await loadAll(); openReceive();
+  o.status='received'; o.updated_at=new Date().toISOString();     // optimistic
+  reliableWrite('order-status:'+o.id, ()=>sb.from('orders').update({status:'received',updated_at:o.updated_at}).eq('id',o.id));
+  toast('Order marked Received'); openReceive();
 }
 function closeReceive(){ el('recvRoot').innerHTML=''; state.recvOrderId=null; render(); }
 
