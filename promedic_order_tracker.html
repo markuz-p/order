@@ -380,6 +380,7 @@ body.dark .tr-fill{background:var(--amber)}
       <button class="tab" data-tab="packing" onclick="setTab('packing')"><span class="ico">📦</span> Packing Slips</button>
       <button class="tab" data-tab="billing" onclick="setTab('billing')"><span class="ico">💲</span> Billing</button>
       <button class="tab" data-tab="trends" onclick="setTab('trends')"><span class="ico">📊</span> Trends</button>
+      <button class="tab" data-tab="rmas" onclick="setTab('rmas')"><span class="ico">↩</span> RMAs</button>
     </div>
 
     <!-- ORDERS TAB -->
@@ -483,6 +484,23 @@ body.dark .tr-fill{background:var(--amber)}
       <div class="section-lb">Spend by Month</div>
       <div class="panel" style="padding:14px 16px"><div id="trMonths"></div></div>
     </section>
+
+    <!-- RMAs TAB -->
+    <section id="tab-rmas" class="hide">
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          <input id="rmaSearch" placeholder="Search RMAs — vendor, RMA #, part…" oninput="renderRMAs()" />
+        </div>
+        <button class="pill amber" onclick="openRMA()" style="color:#3a2800">＋ New RMA</button>
+      </div>
+      <div id="rmaChips" style="display:flex;gap:8px;align-items:center;margin:-6px 0 12px">
+        <button class="fchip on" data-rf="open" onclick="setRmaFilter('open')">Open</button>
+        <button class="fchip" data-rf="all" onclick="setRmaFilter('all')">All</button>
+        <span class="sub" id="rmaSummary" style="margin-left:6px"></span>
+      </div>
+      <div class="panel"><div id="rmaList"></div></div>
+    </section>
   </main>
 </div>
 
@@ -509,12 +527,21 @@ const STATUSES = [
 const STATUS_MAP = Object.fromEntries(STATUSES.map(s=>[s.key,s]));
 STATUS_MAP.cancelled = {key:'cancelled',label:'Cancelled',sub:'',varc:'--s-cancelled'};
 const CARRIERS = ['UPS','FedEx','USPS','LTL Freight','Will Call','Other'];
+const RMA_STAGES = [
+  {key:'requested', label:'Requested',  varc:'--s-quoted'},
+  {key:'authorized',label:'Authorized', varc:'--s-awaiting'},
+  {key:'shipped',   label:'Shipped',    varc:'--s-shipped'},
+  {key:'resolved',  label:'Resolved',   varc:'--s-received'},
+];
+const RMA_MAP = Object.fromEntries(RMA_STAGES.map(s=>[s.key,s]));
+const RMA_REASONS = ['Defective','Wrong part','Warranty failure','Damaged in shipping','Other'];
+const RMA_RESOLUTIONS = ['','Replacement','Credit','Repair','Denied'];
 
 const LOGO_SVG = `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><rect width="40" height="40" rx="10" fill="#13294d"/><text x="19.5" y="28.5" text-anchor="middle" font-family="Oswald,sans-serif" font-weight="700" font-size="25" fill="#fff">P</text><circle cx="29" cy="12" r="3" fill="#f0a500"/></svg>`;
 
 /* ---------- State ---------- */
 let sb = null;
-let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], tab:'orders', filter:'all', editing:null, editingPart:null, lineItems:[] };
+let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], tab:'orders', filter:'all', rmaFilter:'open', editing:null, editingPart:null, lineItems:[] };
 
 /* ---------- Helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -542,7 +569,7 @@ async function doUndo(){
 async function exportBackup(){
   toast('Preparing backup…');
   try{
-    const tables=['suppliers','builds','orders','order_items','packing_slips','parts','attachments','app_settings'];
+    const tables=['suppliers','builds','orders','order_items','packing_slips','parts','attachments','app_settings','rmas'];
     const dump={ app:'Piercy Order Tracker', version:1, exported_at:new Date().toISOString(), tables:{} };
     for(const t of tables){
       const {data,error}=await sb.from(t).select('*');
@@ -613,15 +640,17 @@ function orderTotals(o){ const items=o.items||[]; const qty=items.reduce((a,i)=>
 
 /* ---------- Data loading ---------- */
 async function loadAll(){
-  const [sup,bld,ord,slp,prt] = await Promise.all([
+  const [sup,bld,ord,slp,prt,rma] = await Promise.all([
     sb.from('suppliers').select('*').order('name'),
     sb.from('builds').select('*').order('created_at',{ascending:false}),
     sb.from('orders').select('*, supplier:suppliers(name), build:builds(name), items:order_items(*)').order('updated_at',{ascending:false}),
     sb.from('packing_slips').select('*, order:orders(po_number)').order('date_received',{ascending:false}),
     sb.from('parts').select('*, supplier:suppliers(name)').order('description'),
+    sb.from('rmas').select('*, supplier:suppliers(name), order:orders(po_number)').order('created_at',{ascending:false}),
   ]);
   for(const r of [sup,bld,ord,slp,prt]){ if(r.error){ console.error(r.error); toast('Load error: '+r.error.message); } }
   state.suppliers = sup.data||[]; state.builds = bld.data||[]; state.orders = ord.data||[]; state.slips = slp.data||[]; state.parts = prt.data||[];
+  state.rmas = (rma&&!rma.error) ? (rma.data||[]) : [];   // table may not exist until the RMA add-on is run
   render();
 }
 function partPhotoUrl(path){ return path ? sb.storage.from('part-photos').getPublicUrl(path).data.publicUrl : ''; }
@@ -678,7 +707,7 @@ function render(){
         </div></div>`;
     }).join('');
   }
-  renderSlips(); renderBilling(); renderParts(); renderTrends();
+  renderSlips(); renderBilling(); renderParts(); renderTrends(); renderRMAs();
 }
 
 /* ---------- Render: packing slips ---------- */
@@ -797,6 +826,7 @@ function globalSearchRun(){
   const parts=state.parts.filter(p=>[p.sku,p.description,p.category,p.line,p.supplier?.name].some(has)).slice(0,6);
   const sups=state.suppliers.filter(s=>[s.name,s.email,s.contact,s.customer_number].some(has)).slice(0,6);
   const units=state.builds.filter(b=>[b.name,b.customer,b.line].some(has)).slice(0,6);
+  const rmas=(state.rmas||[]).filter(r=>[r.rma_number,r.sku,r.description,r.supplier?.name,r.order?.po_number].some(has)).slice(0,6);
   let html='';
   if(orders.length){ html+='<div class="gs-group">Orders</div>'+orders.map(o=>`
     <div class="gs-item" onclick="gsOpenOrder('${o.id}')"><div class="gi-main"><strong>${esc(o.po_number||'(no PO#)')}</strong>
@@ -814,6 +844,10 @@ function globalSearchRun(){
     <div class="gs-item" onclick="gsOpenUnit('${b.id}')"><div class="gi-main"><strong>${esc(b.name)}</strong>
       <div class="gi-sub">${esc(b.customer||'')}${b.line?' · '+esc(b.line):''}</div></div>
       <div class="gi-right">${state.orders.filter(o=>o.build_id===b.id).length} orders</div></div>`).join(''); }
+  if(rmas.length){ html+='<div class="gs-group">RMAs</div>'+rmas.map(r=>`
+    <div class="gs-item" onclick="gsOpenRMA('${r.id}')"><div class="gi-main"><strong>${esc(r.supplier?.name||'RMA')}${r.rma_number?' · '+esc(r.rma_number):''}</strong>
+      <div class="gi-sub">${esc(r.description||r.sku||'')}</div></div>
+      <div class="gi-right">${RMA_MAP[r.status]?.label||r.status}</div></div>`).join(''); }
   if(!html) html='<div class="gs-empty">No matches for “'+esc(q)+'”.</div>';
   box.innerHTML=html; box.classList.remove('hide');
 }
@@ -823,11 +857,12 @@ function gsOpenOrder(id){ clearGlobalSearch(); viewOrder(id); }
 function gsOpenPart(id){ const p=state.parts.find(x=>x.id===id); clearGlobalSearch(); if(p) openPart(p); }
 function gsOpenSupplier(id){ clearGlobalSearch(); editSupplier(id); }
 function gsOpenUnit(id){ const b=state.builds.find(x=>x.id===id); clearGlobalSearch(); if(!b) return; setTab('orders'); const s=el('searchBox'); if(s) s.value=b.name; render(); }
+function gsOpenRMA(id){ const r=state.rmas.find(x=>x.id===id); clearGlobalSearch(); if(r) openRMA(r); }
 document.addEventListener('click',e=>{ const g=el('gsearchWrap'); if(g && !g.contains(e.target)) closeGlobalResults(); });
 
 function setTab(t){ state.tab=t;
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
-  ['orders','parts','packing','billing','trends'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
+  ['orders','parts','packing','billing','trends','rmas'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
 }
 function setFilter(k){ state.filter = state.filter===k?'all':k; render(); }
 
@@ -1357,7 +1392,8 @@ function viewOrder(id){
       <span class="mono">${esc(i.sku||'—')}</span><span>${esc(i.description||'—')}</span>
       <span class="mono">${i.qty}</span><span class="mono">${money(i.unit_price)}</span>
       <span class="rq"><input class="mono" type="number" min="0" max="${i.qty}" value="${i.received_qty||0}"
-        onchange="setReceived('${i.id}',this.value,${i.qty})"/> / ${i.qty}</span><span></span></div>`).join('')}` 
+        onchange="setReceived('${i.id}',this.value,${i.qty})"/> / ${i.qty}</span>
+      <span><button class="linkbtn" title="Start a return / RMA" onclick="startReturn('${o.id}','${i.id}')">↩</button></span></div>`).join('')}` 
     : '<div class="sub">No line items on this order.</div>';
   modal(`
     <div class="mhead"><h2>${esc(o.po_number||'Order')} <span class="badge" style="--sc:var(${st.varc});vertical-align:middle;margin-left:8px">${st.label}</span></h2>
@@ -1789,6 +1825,119 @@ async function delBuild(id){
     const {data}=await sb.from('builds').select('*').order('created_at',{ascending:false}); state.builds=data||[];
     renderBuildList(); await loadAll();
   });
+}
+
+/* ---------- RMAs / Returns ---------- */
+function filteredRmas(){
+  let list=state.rmas||[];
+  if((state.rmaFilter||'open')==='open') list=list.filter(r=>r.status!=='resolved');
+  const q=(el('rmaSearch')?.value||'').toLowerCase().trim();
+  if(q) list=list.filter(r=>[r.rma_number,r.sku,r.description,r.supplier?.name,r.reason,r.order?.po_number].join(' ').toLowerCase().includes(q));
+  return list;
+}
+function setRmaFilter(f){ state.rmaFilter=f;
+  document.querySelectorAll('#rmaChips .fchip').forEach(b=>b.classList.toggle('on', b.dataset.rf===f));
+  renderRMAs();
+}
+function renderRMAs(){
+  const box=el('rmaList'); if(!box) return;
+  const all=state.rmas||[];
+  const open=all.filter(r=>r.status!=='resolved');
+  const pending=open.reduce((a,r)=>a+(Number(r.credit_amount)||0),0);
+  const sum=el('rmaSummary'); if(sum) sum.textContent=`${open.length} open${pending?' · '+money0(pending)+' pending credit':''}`;
+  const list=filteredRmas();
+  if(!list.length){ box.innerHTML='<div class="sub" style="padding:16px">No RMAs'+((state.rmaFilter||'open')==='open'?' open':'')+'.</div>'; return; }
+  box.innerHTML=list.map(r=>{
+    const st=RMA_MAP[r.status]||RMA_MAP.requested;
+    return `<div class="att" style="cursor:pointer" onclick="openRMA(state.rmas.find(x=>x.id==='${r.id}'))">
+      <span><strong>${esc(r.supplier?.name||'—')}</strong>${r.rma_number?' · RMA '+esc(r.rma_number):''}
+        <div class="sub">${esc(r.description||r.sku||'—')}${r.qty?' ×'+r.qty:''}${r.reason?' · '+esc(r.reason):''}${r.order?.po_number?' · from '+esc(r.order.po_number):''}</div></span>
+      <span style="text-align:right;white-space:nowrap"><span class="badge" style="--sc:var(${st.varc})">${st.label}</span>
+        ${r.resolution?'<div class="sub">'+esc(r.resolution)+(r.credit_amount?' '+money0(r.credit_amount):'')+'</div>':(r.credit_amount?'<div class="sub mono">'+money0(r.credit_amount)+'</div>':'')}</span>
+    </div>`;
+  }).join('');
+}
+function openRMA(rma=null, prefill=null){
+  const r=rma||prefill||{};
+  const editing=!!(rma&&rma.id);
+  const supOpts=state.suppliers.map(s=>`<option value="${s.id}" ${r.supplier_id===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+  const ordOpts=state.orders.map(o=>`<option value="${o.id}" ${r.order_id===o.id?'selected':''}>${esc(o.po_number||'(no PO)')} — ${esc(o.supplier?.name||'')}</option>`).join('');
+  const reasonOpts=RMA_REASONS.map(x=>`<option ${r.reason===x?'selected':''}>${x}</option>`).join('');
+  const stageOpts=RMA_STAGES.map(s=>`<option value="${s.key}" ${(r.status||'requested')===s.key?'selected':''}>${s.label}</option>`).join('');
+  const resOpts=RMA_RESOLUTIONS.map(x=>`<option value="${x}" ${(r.resolution||'')===x?'selected':''}>${x||'— none —'}</option>`).join('');
+  modal(`<div class="mhead"><h2>${editing?'Edit RMA':'New RMA / Return'}</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="grid2">
+        <div class="field"><label>Vendor</label><select id="rmSup"><option value="">— Select —</option>${supOpts}</select></div>
+        <div class="field"><label>RMA # (from vendor)</label><input id="rmNum" value="${esc(r.rma_number||'')}"/></div>
+      </div>
+      <div class="field"><label>From order (optional)</label><select id="rmOrder"><option value="">— Not linked —</option>${ordOpts}</select></div>
+      <div class="grid2">
+        <div class="field"><label>Part SKU</label><input id="rmSku" value="${esc(r.sku||'')}"/></div>
+        <div class="field"><label>Qty</label><input id="rmQty" type="number" min="1" value="${r.qty||1}"/></div>
+      </div>
+      <div class="field"><label>Description</label><input id="rmDesc" value="${esc(r.description||'')}"/></div>
+      <div class="grid2">
+        <div class="field"><label>Reason</label><select id="rmReason"><option value="">— Select —</option>${reasonOpts}</select></div>
+        <div class="field"><label>Requested date</label><input id="rmDate" type="date" value="${r.request_date||today()}"/></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Status</label><select id="rmStatus">${stageOpts}</select></div>
+        <div class="field"><label>Resolution</label><select id="rmRes">${resOpts}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Return carrier</label><input id="rmCarrier" list="rmaCarrierList" value="${esc(r.carrier||'')}"/>
+          <datalist id="rmaCarrierList">${CARRIERS.map(c=>`<option value="${c}">`).join('')}</datalist></div>
+        <div class="field"><label>Return tracking</label><input id="rmTrack" value="${esc(r.tracking_id||'')}"/></div>
+      </div>
+      <div class="field"><label>Credit amount ($) — if credited</label><input id="rmCredit" type="number" min="0" step="0.01" value="${r.credit_amount!=null?r.credit_amount:''}"/></div>
+      <div class="field"><label>Notes</label><textarea id="rmNotes">${esc(r.notes||'')}</textarea></div>
+    </div>
+    <div class="mfoot">
+      ${editing?`<button class="btn sub" style="color:var(--danger)" onclick="delRMA('${rma.id}')">Delete</button>`:'<span></span>'}
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" onclick="saveRMA(${editing?`'${rma.id}'`:'null'})">Save</button>
+      </div>
+    </div>`);
+}
+async function saveRMA(id){
+  const rec={
+    supplier_id: el('rmSup').value||null,
+    rma_number: el('rmNum').value.trim()||null,
+    order_id: el('rmOrder').value||null,
+    sku: el('rmSku').value.trim()||null,
+    description: el('rmDesc').value.trim()||null,
+    qty: Number(el('rmQty').value)||1,
+    reason: el('rmReason').value||null,
+    status: el('rmStatus').value||'requested',
+    resolution: el('rmRes').value||null,
+    credit_amount: el('rmCredit').value!==''?Number(el('rmCredit').value):null,
+    carrier: el('rmCarrier').value.trim()||null,
+    tracking_id: el('rmTrack').value.trim()||null,
+    request_date: el('rmDate').value||null,
+    notes: el('rmNotes').value.trim()||null,
+    updated_at: new Date().toISOString(),
+  };
+  let error;
+  if(id&&id!=='null'){ ({error}=await sb.from('rmas').update(rec).eq('id',id)); }
+  else { ({error}=await sb.from('rmas').insert(rec)); }
+  if(error){ toast('Save failed: '+error.message); return; }
+  closeModal(); toast(id&&id!=='null'?'RMA updated':'RMA created'); await loadAll(); setTab('rmas');
+}
+async function delRMA(id){
+  if(!confirm('Delete this RMA?')) return;
+  const {data:r}=await sb.from('rmas').select('*').eq('id',id).maybeSingle();
+  const {error}=await sb.from('rmas').delete().eq('id',id);
+  if(error){ toast('Delete failed: '+error.message); return; }
+  closeModal(); await loadAll(); setTab('rmas');
+  undoToast('RMA deleted', async ()=>{ if(r) await sb.from('rmas').insert(r); await loadAll(); setTab('rmas'); });
+}
+function startReturn(orderId, itemId){
+  const o=state.orders.find(x=>x.id===orderId); if(!o) return;
+  const it=(o.items||[]).find(i=>i.id===itemId)||{};
+  closeModal();
+  openRMA(null, { supplier_id:o.supplier_id, order_id:o.id, sku:it.sku, description:it.description, qty:it.qty||1, status:'requested', request_date:today() });
 }
 
 /* ---------- Packing slips ---------- */
