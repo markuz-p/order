@@ -1526,6 +1526,39 @@ async function addSupplier(){
   const {data}=await sb.from('suppliers').select('*').order('name'); state.suppliers=data||[];
   renderSupList(); toast('Supplier added');
 }
+function supplierStats(id){
+  const orders=state.orders.filter(o=>o.supplier_id===id);
+  const active=orders.filter(o=>o.status!=='cancelled');
+  const spend=active.reduce((a,o)=>a+orderTotals(o).est,0);
+  const open=orders.filter(o=>!['received','cancelled'].includes(o.status));
+  const openVal=open.reduce((a,o)=>a+orderTotals(o).est,0);
+  const leads=orders.map(o=>(o.order_date&&o.expected_date)?(new Date(o.expected_date)-new Date(o.order_date))/86400000:null).filter(v=>v!=null&&v>=0);
+  const avgLead=leads.length?Math.round(leads.reduce((a,b)=>a+b,0)/leads.length):null;
+  const dated=orders.filter(o=>o.order_date).sort((a,b)=>b.order_date.localeCompare(a.order_date));
+  const last=dated[0]||null;
+  const freq={};
+  orders.forEach(o=>(o.items||[]).forEach(i=>{ const k=(i.description||i.sku||'').trim(); if(!k)return; freq[k]=(freq[k]||0)+(Number(i.qty)||0); }));
+  const top=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const recent=[...orders].sort((a,b)=>(b.order_date||b.created_at||'').localeCompare(a.order_date||a.created_at||'')).slice(0,6);
+  return {count:orders.length, spend, openCount:open.length, openVal, avgLead, last, top, recent};
+}
+function supplierHistoryHtml(id){
+  const s=supplierStats(id);
+  if(!s.count) return `<div class="section-lb">Order history</div><div class="sub">No orders with this supplier yet.</div>`;
+  const usually = s.top.length ? s.top.map(([k,q])=>esc(k)+' <span class="sub">('+q+')</span>').join(', ') : '—';
+  const recent = s.recent.map(o=>`<div class="att" style="cursor:pointer" onclick="viewOrder('${o.id}')">
+      <span><strong class="mono">${esc(o.po_number||'—')}</strong> · ${o.order_date?fmtDate(o.order_date):'no date'} <span class="sub">${STATUS_MAP[o.status]?.label||o.status}</span></span>
+      <span class="mono">${money0(orderTotals(o).est)}</span></div>`).join('');
+  return `
+    <div class="section-lb">Order history</div>
+    <div class="drow"><span class="k">Orders</span><span>${s.count} · <strong>${money0(s.spend)}</strong> total</span></div>
+    <div class="drow"><span class="k">Open now</span><span>${s.openCount} · ${money0(s.openVal)}</span></div>
+    <div class="drow"><span class="k">Typical lead time</span><span>${s.avgLead!=null?s.avgLead+' days <span class="sub">(quoted)</span>':'—'}</span></div>
+    <div class="drow"><span class="k">Last order</span><span>${s.last?fmtDate(s.last.order_date)+' · '+(STATUS_MAP[s.last.status]?.label||s.last.status):'—'}</span></div>
+    <div class="drow"><span class="k">Usually buys</span><span>${usually}</span></div>
+    <div class="section-lb">Recent orders <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">tap to open</span></div>
+    ${recent}`;
+}
 function editSupplier(id){
   const s=state.suppliers.find(x=>x.id===id); if(!s) return;
   modal(`<div class="mhead"><h2>Edit Supplier</h2><button class="x" onclick="openSuppliers()">✕</button></div>
@@ -1539,6 +1572,7 @@ function editSupplier(id){
         <div class="field"><label>Contact</label><input id="esContact" value="${esc(s.contact||'')}"/></div>
         <div class="field"><label>Email</label><input id="esEmail" value="${esc(s.email||'')}" placeholder="orders@supplier.com"/></div>
       </div>
+      ${supplierHistoryHtml(id)}
     </div>
     <div class="mfoot">
       <button class="btn warn" onclick="delSupplier('${s.id}')">Delete</button>
