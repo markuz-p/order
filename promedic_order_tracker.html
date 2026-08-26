@@ -1381,6 +1381,7 @@ function viewOrder(id){
       <div style="display:flex;gap:8px">
         <button class="btn sub" onclick="downloadPO('${o.id}')">⬇ PDF</button>
         <button class="btn sub" onclick="emailPO('${o.id}')">✉ Email PO</button>
+        <button class="btn sub" onclick="openQuoteDoc('${o.id}')"><span class="ico">🧾</span> Quote</button>
       </div>
       <div style="display:flex;gap:8px">
         ${next?`<button class="btn ok" onclick="advance('${o.id}','${next.key}')">→ ${next.label}</button>`:''}
@@ -1956,6 +1957,175 @@ function emailPO(id){
   const body = `Hello${r.sup.contact?' '+r.sup.contact:''},\n\nPlease find our purchase order ${r.o.po_number||''} attached (PDF just downloaded — attach it to this email).${acct}\n\nThank you,\n${brandName()}`;
   window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
   toast('PDF downloaded — attach it to the email draft');
+}
+
+/* ---------- Customer Quote (you → customer, at sell price) ---------- */
+function openQuoteDoc(id){
+  const o=state.orders.find(x=>x.id===id); if(!o){ toast('Order not found'); return; }
+  const markup=Number(localStorage.getItem('pmc_markup')||35);
+  const cust=o.build?.customer||o.build?.name||'';
+  const items=o.items||[];
+  const rowsHtml=items.map(i=>{
+    const cost=Number(i.unit_price)||0; const sell=+(cost*(1+markup/100)).toFixed(2);
+    return `<div class="qline" style="display:grid;grid-template-columns:1fr 44px 76px 84px;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:13px">
+      <span>${esc(i.description||i.sku||'Item')}</span>
+      <span class="mono" style="text-align:center">×${i.qty||0}</span>
+      <span class="mono sub" style="text-align:right">${money(cost)}</span>
+      <input class="mono" data-qid="${i.id}" data-qty="${Number(i.qty)||0}" data-cost="${cost}" value="${sell.toFixed(2)}" oninput="quoteRecalc()" style="text-align:right;padding:6px;border:1px solid var(--line);border-radius:7px;width:100%"/>
+    </div>`;
+  }).join('');
+  modal(`<div class="mhead"><h2>Customer Quote</h2><button class="x" onclick="viewOrder('${o.id}')">✕</button></div>
+    <div class="mbody">
+      <div class="grid2">
+        <div class="field"><label>Prepared for (customer)</label><input id="qCust" value="${esc(cust)}" placeholder="Customer / department"/></div>
+        <div class="field"><label>Markup %</label><input id="qMarkup" type="number" min="0" step="1" value="${markup}" oninput="quoteApplyMarkup()"/></div>
+      </div>
+      <div class="section-lb">Line prices <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">cost in grey · edit the sell price on the right</span></div>
+      <div style="display:grid;grid-template-columns:1fr 44px 76px 84px;gap:8px;font-size:10.5px;text-transform:uppercase;color:var(--muted);font-family:Oswald,sans-serif">
+        <span>Item</span><span style="text-align:center">Qty</span><span style="text-align:right">Cost</span><span style="text-align:right">Sell</span></div>
+      ${rowsHtml || '<div class="sub">No line items on this order.</div>'}
+      <div class="grid2" style="margin-top:12px">
+        <div class="field"><label>Tax ($)</label><input id="qTax" type="number" min="0" step="0.01" value="0" oninput="quoteRecalc()"/></div>
+        <div class="field"><label>Shipping ($)</label><input id="qShip" type="number" min="0" step="0.01" value="0" oninput="quoteRecalc()"/></div>
+      </div>
+      <div class="drow" style="margin-top:6px"><span class="k">Quote total</span><span class="mono" id="qTotal" style="font-size:16px;font-weight:700">—</span></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn sub" onclick="viewOrder('${o.id}')">Back</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="genQuote('${o.id}',true)">✉ Email</button>
+        <button class="btn primary" onclick="genQuote('${o.id}',false)">⬇ Download Quote</button>
+      </div>
+    </div>`);
+  quoteRecalc();
+}
+function quoteApplyMarkup(){
+  const m=Number(el('qMarkup').value)||0;
+  localStorage.setItem('pmc_markup', m);
+  document.querySelectorAll('#modalRoot [data-qid]').forEach(inp=>{
+    const cost=Number(inp.dataset.cost)||0; inp.value=(cost*(1+m/100)).toFixed(2);
+  });
+  quoteRecalc();
+}
+function quoteRecalc(){
+  let sub=0;
+  document.querySelectorAll('#modalRoot [data-qid]').forEach(inp=>{
+    sub += (Number(inp.value)||0) * (Number(inp.dataset.qty)||0);
+  });
+  const tax=Number(el('qTax')?.value)||0, ship=Number(el('qShip')?.value)||0;
+  const tot=sub+tax+ship;
+  if(el('qTotal')) el('qTotal').textContent=money(tot);
+}
+function collectQuote(){
+  const prices={};
+  document.querySelectorAll('#modalRoot [data-qid]').forEach(inp=>{ prices[inp.dataset.qid]=Number(inp.value)||0; });
+  return { customer:el('qCust').value.trim(), markup:Number(el('qMarkup').value)||0,
+    tax:Number(el('qTax').value)||0, shipping:Number(el('qShip').value)||0, prices };
+}
+function genQuote(id, doEmail){
+  const opts=collectQuote();
+  localStorage.setItem('pmc_markup', opts.markup);
+  const r=buildQuote(id, opts); if(!r){ toast('Could not build quote'); return; }
+  r.doc.save(r.filename);
+  if(doEmail){
+    const subj=`Quote ${r.quoteNo} — ${brandName()}`;
+    const body=`Hello${opts.customer?' '+opts.customer:''},\n\nPlease find our quote ${r.quoteNo} attached (PDF just downloaded — attach it to this email).\n\nThank you,\n${brandName()}`;
+    window.location.href=`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+    toast('Quote downloaded — attach it to the email draft');
+  } else toast('Quote downloaded');
+}
+function buildQuote(id, opts){
+  const o=state.orders.find(x=>x.id===id); if(!o) return null;
+  opts=opts||{}; const markup=Number(opts.markup)||0; const prices=opts.prices||{};
+  const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'letter'});
+  const blue=[31,111,178], red=[193,32,43], navy=[35,80,127], dark=[22,24,29],
+        ink=[45,55,72], muted=[120,132,150], line=[228,231,236];
+  const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=48, RX=PW-M;
+
+  // Masthead: logo + "Customer Quote"
+  let mastheadBottom=88;
+  try{ const [ow,oh]=brandLogoWH(); let lw=210,lh=lw*(oh/ow); if(lh>72){lh=72;lw=lh*(ow/oh);}
+    const data=brandLogo(); const fmt=/^data:image\/png/i.test(data)?'PNG':'JPEG';
+    doc.addImage(data,fmt,M,40,lw,lh); mastheadBottom=40+lh; }catch(e){}
+  doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(...muted);
+  doc.text('Customer Quote', M, mastheadBottom+24);
+  let y=mastheadBottom+24;
+
+  // Meta (right): Quote #, Date, Valid until
+  const quoteNo=`Q-${(o.po_number||o.id.slice(0,6))}`;
+  const d=new Date(); const valid=new Date(Date.now()+30*86400000);
+  const fmtD=x=>x.toISOString().slice(0,10);
+  let my=44;
+  const metaLine=(label,val)=>{ doc.setFontSize(9); doc.setTextColor(...muted); doc.setFont('helvetica','normal');
+    doc.text(label.toUpperCase(), RX-190, my); doc.setTextColor(...navy); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text(String(val||'—'), RX, my, {align:'right'}); my+=17; };
+  metaLine('Quote #', quoteNo);
+  metaLine('Date', fmtDate(fmtD(d)));
+  metaLine('Valid Until', fmtDate(fmtD(valid)));
+  if(o.build?.name) metaLine('Unit / Build', o.build.name);
+
+  y+=14; doc.setDrawColor(...line); doc.setLineWidth(1); doc.line(M,y,RX,y);
+
+  // Prepared For (left) + From (right)
+  y+=22; const blockTop=y;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...ink); doc.text('PREPARED FOR', M, y);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...navy);
+  doc.text(opts.customer || o.build?.customer || o.build?.name || 'Customer', M, y+17);
+
+  const SX=M+(PW-M*2)*0.55;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...ink); doc.text('FROM', SX, blockTop);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...navy); doc.text(brandName(), SX, blockTop+17);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...muted); let ty=blockTop+32;
+  doc.splitTextToSize(brandShipTo(), PW-M-SX).forEach(ln=>{ doc.text(ln, SX, ty); ty+=13; });
+  y=Math.max(ty, blockTop+44)+8;
+
+  // Items table (sell prices, no vendor SKU)
+  let subtotal=0;
+  const rows=(o.items||[]).map(i=>{
+    const cost=Number(i.unit_price)||0;
+    const sell=(prices[i.id]!=null)?Number(prices[i.id]):+(cost*(1+markup/100)).toFixed(2);
+    const lineTot=(Number(i.qty)||0)*sell; subtotal+=lineTot;
+    return [i.description||i.sku||'Item', String(i.qty||0), money(sell), money(lineTot)];
+  });
+  doc.autoTable({
+    startY:y, head:[['Description','Qty','Unit Price','Total']],
+    body:rows.length?rows:[['No items','','','']],
+    theme:'grid',
+    headStyles:{ fillColor:[14,32,56], textColor:255, fontStyle:'bold', fontSize:9 },
+    bodyStyles:{ fontSize:9, textColor:[30,40,60] },
+    columnStyles:{ 1:{halign:'center',cellWidth:46}, 2:{halign:'right',cellWidth:78}, 3:{halign:'right',cellWidth:82} },
+    margin:{ left:M, right:M },
+  });
+
+  // Totals stack
+  let ey=doc.lastAutoTable.finalY+14;
+  const tax=Number(opts.tax)||0, ship=Number(opts.shipping)||0;
+  const totLine=(label,val,bold)=>{ doc.setFont('helvetica',bold?'bold':'normal'); doc.setFontSize(bold?11:9.5);
+    doc.setTextColor(...(bold?navy:muted)); doc.text(label, RX-150, ey); doc.setTextColor(...(bold?navy:ink));
+    doc.text(money(val), RX, ey, {align:'right'}); ey+=15; };
+  totLine('Subtotal', subtotal);
+  if(tax) totLine('Tax', tax);
+  if(ship) totLine('Shipping', ship);
+  const grand=subtotal+tax+ship;
+
+  // Grand total dark bar
+  ey+=4; const barW=230, barH=30, barX=RX-barW;
+  doc.setFillColor(...dark); doc.roundedRect(barX, ey, barW, barH, 5,5,'F');
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(210,214,222); doc.text('QUOTE TOTAL', barX+14, ey+19);
+  doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.setTextColor(255,255,255); doc.text(money(grand), barX+barW-14, ey+20, {align:'right'});
+  ey+=barH;
+
+  // Validity note
+  ey+=24; doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...muted);
+  doc.text(`This quote is valid until ${fmtDate(fmtD(valid))}. Prices subject to change after this date.`, M, ey);
+
+  // Footer
+  const fy=PH-40; doc.setDrawColor(...line); doc.setLineWidth(1); doc.line(M,fy-14,RX,fy-14);
+  doc.setFillColor(...blue); doc.rect(M,fy-4,20,4,'F'); doc.setFillColor(...red); doc.rect(M+20,fy-4,20,4,'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...muted);
+  doc.text('Powered by Piercy Software', RX, fy-1, {align:'right'});
+
+  return { doc, o, quoteNo, filename:`Quote_${quoteNo.replace(/[^\w.\-]/g,'_')}.pdf` };
 }
 
 /* ====================== AUTH / BOOT ====================== */
