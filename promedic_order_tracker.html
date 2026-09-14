@@ -658,6 +658,7 @@ async function loadAll(){
   state.suppliers = sup.data||[]; state.builds = bld.data||[]; state.orders = ord.data||[]; state.slips = slp.data||[]; state.parts = prt.data||[];
   state.rmas = (rma&&!rma.error) ? (rma.data||[]) : [];   // table may not exist until the RMA add-on is run
   render();
+  handleDeepLink();
 }
 function partPhotoUrl(path){ return path ? sb.storage.from('part-photos').getPublicUrl(path).data.publicUrl : ''; }
 
@@ -866,6 +867,67 @@ function gsOpenUnit(id){ const b=state.builds.find(x=>x.id===id); clearGlobalSea
 function gsOpenRMA(id){ const r=state.rmas.find(x=>x.id===id); clearGlobalSearch(); if(r) openRMA(r); }
 document.addEventListener('click',e=>{ const g=el('gsearchWrap'); if(g && !g.contains(e.target)) closeGlobalResults(); });
 
+/* ---------- QR labels (print a code, scan with phone to open the record) ---------- */
+let _qrLoading=null, _qrLabel=null;
+function loadQR(){
+  if(window.qrcode) return Promise.resolve(window.qrcode);
+  if(_qrLoading) return _qrLoading;
+  _qrLoading=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+    s.onload=()=> window.qrcode ? res(window.qrcode) : rej(new Error('QR library failed to load'));
+    s.onerror=()=>rej(new Error('Could not load the QR generator (check your internet).'));
+    document.head.appendChild(s);
+  });
+  return _qrLoading;
+}
+function recordUrl(kind,id){ return `${location.origin}${location.pathname}#${kind}=${id}`; }
+async function qrDataUrl(text){ const qrcode=await loadQR(); const qr=qrcode(0,'M'); qr.addData(text); qr.make(); return qr.createDataURL(6,8); }
+function qrForPart(id){ const p=state.parts.find(x=>x.id===id); if(!p){ toast('Save the part first'); return; }
+  showQrLabel('part', id, p.description||p.sku||'Part', p.sku?('SKU '+p.sku):(p.line||'')); }
+function qrForUnit(id){ const b=state.builds.find(x=>x.id===id); if(!b) return;
+  showQrLabel('unit', id, b.name, b.line||b.customer||''); }
+async function showQrLabel(kind,id,title,subtitle){
+  const url=recordUrl(kind,id);
+  modal(`<div class="mhead"><h2>QR Label</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody" style="text-align:center"><div id="qrBox" class="sub">Generating…</div></div>
+    <div class="mfoot"><button class="btn sub" onclick="closeModal()">Close</button>
+      <button class="btn primary" id="qrPrintBtn" disabled onclick="printQrLabel()">🖨 Print label</button></div>`);
+  try{
+    const data=await qrDataUrl(url); _qrLabel={data,title,subtitle};
+    el('qrBox').innerHTML=`<img src="${data}" style="width:210px;height:210px;image-rendering:pixelated"/>
+      <div style="font-weight:700;font-size:15px;margin-top:8px">${esc(title)}</div>
+      ${subtitle?`<div class="sub">${esc(subtitle)}</div>`:''}
+      <div class="sub" style="margin-top:10px;font-size:11.5px">Point a phone camera at this code to open the record.</div>`;
+    el('qrPrintBtn').disabled=false;
+  }catch(e){ el('qrBox').innerHTML='<span style="color:var(--danger)">'+esc(e.message||e)+'</span>'; }
+}
+function printQrLabel(){
+  if(!_qrLabel) return;
+  const w=window.open('','_blank','width=420,height=580');
+  if(!w){ toast('Allow pop-ups to print the label'); return; }
+  w.document.write(`<html><head><title>${esc(_qrLabel.title)}</title>
+    <style>body{font-family:Arial,Helvetica,sans-serif;text-align:center;padding:26px;margin:0}
+    img{width:280px;height:280px;image-rendering:pixelated}
+    .t{font-weight:700;font-size:19px;margin-top:12px}.s{color:#555;font-size:13px;margin-top:2px}</style></head>
+    <body onload="window.print()"><img src="${_qrLabel.data}"/>
+      <div class="t">${esc(_qrLabel.title)}</div>${_qrLabel.subtitle?`<div class="s">${esc(_qrLabel.subtitle)}</div>`:''}
+    </body></html>`);
+  w.document.close();
+}
+/* Deep-link: opens the scanned record once the app is loaded + signed in */
+let _deepLink = location.hash || '';
+let _deepLinkDone = false;
+function handleDeepLink(){
+  if(_deepLinkDone) return; _deepLinkDone=true;
+  const m=_deepLink.match(/[#&](part|unit|order)=([\w-]+)/); if(!m) return;
+  const kind=m[1], id=m[2];
+  try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){}
+  if(kind==='part'){ const p=state.parts.find(x=>x.id===id); if(p){ setTab('parts'); openPart(p); } else toast('That part wasn\'t found'); }
+  else if(kind==='order'){ const o=state.orders.find(x=>x.id===id); if(o) viewOrder(id); else toast('That order wasn\'t found'); }
+  else if(kind==='unit'){ const b=state.builds.find(x=>x.id===id); if(b){ setTab('orders'); const s=el('searchBox'); if(s) s.value=b.name; render(); } else toast('That unit wasn\'t found'); }
+}
+
 function setTab(t){ state.tab=t;
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
   ['orders','parts','packing','billing','trends','rmas'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
@@ -941,7 +1003,7 @@ function openPart(p=null){
       <div class="field"><label>Notes</label><textarea id="pNotes">${esc(p?.notes||'')}</textarea></div>
     </div>
     <div class="mfoot">
-      <div>${p?`<button class="btn warn" onclick="deletePart('${p.id}')">Delete</button>`:''}</div>
+      <div style="display:flex;gap:8px">${p?`<button class="btn warn" onclick="deletePart('${p.id}')">Delete</button><button class="btn sub" onclick="qrForPart('${p.id}')">▦ QR label</button>`:''}</div>
       <div style="display:flex;gap:8px">
         <button class="btn sub" onclick="closeModal()">Cancel</button>
         <button class="btn primary" onclick="savePart()">${p?'Save changes':'Add part'}</button>
@@ -1839,7 +1901,8 @@ function renderBuildList(){
     const cnt=state.orders.filter(o=>o.build_id===b.id).length;
     return `<div class="att"><span><strong>${esc(b.name)}</strong>${b.line?' <span class="linep">'+esc(b.line)+'</span>':''}${b.customer?' · '+esc(b.customer):''}
       <span class="sub">(${cnt} order${cnt===1?'':'s'})</span></span>
-      <button class="adel" onclick="delBuild('${b.id}')">✕</button></div>`;
+      <span style="display:flex;gap:6px"><button class="linkbtn" title="QR label" onclick="qrForUnit('${b.id}')">▦</button>
+      <button class="adel" onclick="delBuild('${b.id}')">✕</button></span></div>`;
   }).join('') : '<div class="sub">None yet.</div>';
 }
 async function addBuild(){
