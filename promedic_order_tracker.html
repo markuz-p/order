@@ -279,6 +279,8 @@ body.dark .tr-fill{background:var(--amber)}
 .gs-item .gi-sub{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .gs-item .gi-right{font-size:12px;color:var(--muted);white-space:nowrap;flex:none}
 .gs-empty{padding:14px 10px;color:var(--muted);font-size:13px}
+.logrow{padding:8px 0;border-top:1px solid var(--line);font-size:13px;color:var(--ink)}
+.logrow .logmeta{font-size:11px;color:var(--muted);margin-bottom:2px}
 
 @media(max-width:860px){
   .rail{grid-template-columns:repeat(3,1fr)}
@@ -569,7 +571,7 @@ async function doUndo(){
 async function exportBackup(){
   toast('Preparing backup…');
   try{
-    const tables=['suppliers','builds','orders','order_items','packing_slips','parts','attachments','app_settings','rmas'];
+    const tables=['suppliers','builds','orders','order_items','packing_slips','parts','attachments','app_settings','rmas','order_notes'];
     const dump={ app:'Piercy Order Tracker', version:1, exported_at:new Date().toISOString(), tables:{} };
     for(const t of tables){
       const {data,error}=await sb.from(t).select('*');
@@ -1254,13 +1256,14 @@ function closeModal(){ el('modalRoot').innerHTML=''; }
 function modal(html){ el('modalRoot').innerHTML=`<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`; }
 
 /* ---------- Order modal ---------- */
-function openOrder(o=null){
-  state.editing = o;
-  state.lineItems = o ? (o.items||[]).map(i=>({...i})) : [{sku:'',description:'',qty:1,unit_price:0,received_qty:0}];
+function openOrder(o=null, seed=null){
+  state.editing = o;                       // only a real existing order edits
+  const src = o || seed;                   // where line items / defaults come from
+  state.lineItems = src ? (src.items||[]).map(i=>({sku:i.sku||'',description:i.description||'',qty:i.qty||1,unit_price:i.unit_price||0,received_qty:o?(i.received_qty||0):0})) : [{sku:'',description:'',qty:1,unit_price:0,received_qty:0}];
   const lastSup = localStorage.getItem('pmc_last_supplier')||'';
   const lastBld = localStorage.getItem('pmc_last_build')||'';
-  const selSup = o ? o.supplier_id : lastSup;
-  const selBld = o ? o.build_id : lastBld;
+  const selSup = o ? o.supplier_id : (seed ? seed.supplier_id : lastSup);
+  const selBld = o ? o.build_id : (seed ? seed.build_id : lastBld);
   const supOpts = state.suppliers.map(s=>`<option value="${s.id}" ${selSup&&selSup===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
   const bldOpts = state.builds.map(b=>`<option value="${b.id}" ${selBld&&selBld===b.id?'selected':''}>${esc(b.name)}</option>`).join('');
   const stOpts = [...STATUSES,STATUS_MAP.cancelled].map(s=>`<option value="${s.key}" ${o&&o.status===s.key?'selected':(!o&&s.key==='needed'?'selected':'')}>${s.label}</option>`).join('');
@@ -1366,6 +1369,12 @@ async function saveOrder(){
   localStorage.setItem('pmc_last_build', rec.build_id||'');
   closeModal(); toast(state.editing?'Order updated':'Order created'); await loadAll();
 }
+function reorderOrder(id){
+  const o=state.orders.find(x=>x.id===id); if(!o) return;
+  closeModal();
+  openOrder(null, { supplier_id:o.supplier_id, build_id:o.build_id, items:(o.items||[]) });
+  toast('New order started — review and save');
+}
 async function deleteOrder(id){
   if(!confirm('Delete this order and its line items?\n(You can Undo for a few seconds after.)')) return;
   const {data:ord}=await sb.from('orders').select('*').eq('id',id).maybeSingle();
@@ -1412,12 +1421,19 @@ function viewOrder(id){
       ${itemsHtml}
       <div class="section-lb">Attachments</div>
       <div id="attList"><div class="sub">Loading…</div></div>
+      <div class="section-lb">Activity log</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="noteInput" placeholder="Add a note (e.g. called vendor, backordered 2 wks)" style="flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)" onkeydown="if(event.key==='Enter')addOrderNote('${o.id}')"/>
+        <button class="btn sub" onclick="addOrderNote('${o.id}')">Add</button>
+      </div>
+      <div id="noteLog"><div class="sub">Loading…</div></div>
     </div>
     <div class="mfoot">
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn sub" onclick="downloadPO('${o.id}')">⬇ PDF</button>
         <button class="btn sub" onclick="emailPO('${o.id}')">✉ Email PO</button>
         <button class="btn sub" onclick="openQuoteDoc('${o.id}')"><span class="ico">🧾</span> Quote</button>
+        <button class="btn sub" onclick="reorderOrder('${o.id}')" title="Start a new order from this one">⧉ Reorder</button>
       </div>
       <div style="display:flex;gap:8px">
         ${next?`<button class="btn ok" onclick="advance('${o.id}','${next.key}')">→ ${next.label}</button>`:''}
@@ -1425,6 +1441,24 @@ function viewOrder(id){
       </div>
     </div>`);
   loadAttachments(o.id);
+  loadNotes(o.id);
+}
+async function loadNotes(orderId){
+  const box=el('noteLog'); if(!box) return;
+  const {data,error}=await sb.from('order_notes').select('*').eq('order_id',orderId).order('created_at',{ascending:false});
+  if(error){ box.innerHTML='<div class="sub">Activity log isn\'t set up yet — run the order_notes add-on.</div>'; return; }
+  if(!data.length){ box.innerHTML='<div class="sub">No log entries yet.</div>'; return; }
+  box.innerHTML=data.map(n=>{
+    const dt=new Date(n.created_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+    return `<div class="logrow"><div class="logmeta">${esc(dt)}</div><div>${esc(n.body)}</div></div>`;
+  }).join('');
+}
+async function addOrderNote(orderId){
+  const inp=el('noteInput'); const body=(inp.value||'').trim(); if(!body) return;
+  inp.value='';
+  const {error}=await sb.from('order_notes').insert({order_id:orderId, body});
+  if(error){ toast('Could not save note: '+error.message); inp.value=body; return; }
+  loadNotes(orderId);
 }
 async function setReceived(itemId,val,max){
   const q=Math.min(Number(val)||0,max);
