@@ -658,6 +658,7 @@ async function loadAll(){
   state.loading = false;
   render();                        // board paints now
   // Wave 2 — everything else, loaded in the background
+  state.loading2 = true;
   const [slp,prt,rma] = await Promise.all([
     sb.from('packing_slips').select('*, order:orders(po_number)').order('date_received',{ascending:false}),
     sb.from('parts').select('*, supplier:suppliers(name)').order('description'),
@@ -666,6 +667,7 @@ async function loadAll(){
   for(const r of [slp,prt]){ if(r.error){ console.error(r.error); } }
   state.slips = slp.data||[]; state.parts = prt.data||[];
   state.rmas = (rma&&!rma.error) ? (rma.data||[]) : [];   // table may not exist until the RMA add-on is run
+  state.loading2 = false;
   render();                        // fills parts / slips / trends / RMAs
   el('syncDot').classList.add('on'); el('syncTxt').textContent='Synced';
   handleDeepLink();
@@ -736,6 +738,11 @@ function render(){
 /* ---------- Render: packing slips ---------- */
 function renderSlips(){
   const b=el('slipsBody');
+  if(state.loading2 && !state.slips.length){
+    el('slipsEmpty').classList.add('hide');
+    b.innerHTML = '<tr><td colspan="5" class="sub" style="text-align:center;padding:24px">Loading packing slips…</td></tr>';
+    return;
+  }
   el('slipsEmpty').classList.toggle('hide', state.slips.length>0);
   b.innerHTML = state.slips.map(s=>`<tr>
     <td class="mono">${esc(s.slip_number||'—')}</td>
@@ -966,6 +973,11 @@ function setPartLine(l){ state.partLine=l;
 }
 function renderParts(){
   const grid = el('partsGrid'); if(!grid) return;
+  if(state.loading2 && !state.parts.length){
+    el('partsEmpty').classList.add('hide');
+    grid.innerHTML = '<div class="sub" style="padding:30px;text-align:center;grid-column:1/-1">Loading parts…</div>';
+    return;
+  }
   el('partsEmpty').classList.toggle('hide', state.parts.length>0);
   const list = filteredParts();
   grid.innerHTML = list.map(p=>{
@@ -1962,6 +1974,7 @@ function renderRMAs(){
   const open=all.filter(r=>r.status!=='resolved');
   const pending=open.reduce((a,r)=>a+(Number(r.credit_amount)||0),0);
   const sum=el('rmaSummary'); if(sum) sum.textContent=`${open.length} open${pending?' · '+money0(pending)+' pending credit':''}`;
+  if(state.loading2 && !all.length){ box.innerHTML='<div class="sub" style="padding:16px">Loading RMAs…</div>'; return; }
   const list=filteredRmas();
   if(!list.length){ box.innerHTML='<div class="sub" style="padding:16px">No RMAs'+((state.rmaFilter||'open')==='open'?' open':'')+'.</div>'; return; }
   box.innerHTML=list.map(r=>{
