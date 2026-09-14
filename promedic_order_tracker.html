@@ -646,18 +646,28 @@ function orderTotals(o){ const items=o.items||[]; const qty=items.reduce((a,i)=>
 
 /* ---------- Data loading ---------- */
 async function loadAll(){
-  const [sup,bld,ord,slp,prt,rma] = await Promise.all([
+  state.loading = true;
+  // Wave 1 — what the orders board needs; paint as soon as it lands
+  const [ord,sup,bld] = await Promise.all([
+    sb.from('orders').select('*, supplier:suppliers(name), build:builds(name), items:order_items(*)').order('updated_at',{ascending:false}),
     sb.from('suppliers').select('*').order('name'),
     sb.from('builds').select('*').order('created_at',{ascending:false}),
-    sb.from('orders').select('*, supplier:suppliers(name), build:builds(name), items:order_items(*)').order('updated_at',{ascending:false}),
+  ]);
+  for(const r of [ord,sup,bld]){ if(r.error){ console.error(r.error); toast('Load error: '+r.error.message); } }
+  state.orders = ord.data||[]; state.suppliers = sup.data||[]; state.builds = bld.data||[];
+  state.loading = false;
+  render();                        // board paints now
+  // Wave 2 — everything else, loaded in the background
+  const [slp,prt,rma] = await Promise.all([
     sb.from('packing_slips').select('*, order:orders(po_number)').order('date_received',{ascending:false}),
     sb.from('parts').select('*, supplier:suppliers(name)').order('description'),
     sb.from('rmas').select('*, supplier:suppliers(name), order:orders(po_number)').order('created_at',{ascending:false}),
   ]);
-  for(const r of [sup,bld,ord,slp,prt]){ if(r.error){ console.error(r.error); toast('Load error: '+r.error.message); } }
-  state.suppliers = sup.data||[]; state.builds = bld.data||[]; state.orders = ord.data||[]; state.slips = slp.data||[]; state.parts = prt.data||[];
+  for(const r of [slp,prt]){ if(r.error){ console.error(r.error); } }
+  state.slips = slp.data||[]; state.parts = prt.data||[];
   state.rmas = (rma&&!rma.error) ? (rma.data||[]) : [];   // table may not exist until the RMA add-on is run
-  render();
+  render();                        // fills parts / slips / trends / RMAs
+  el('syncDot').classList.add('on'); el('syncTxt').textContent='Synced';
   handleDeepLink();
 }
 function partPhotoUrl(path){ return path ? sb.storage.from('part-photos').getPublicUrl(path).data.publicUrl : ''; }
@@ -685,6 +695,12 @@ function render(){
 
   const list = filteredOrders();
   const body = el('ordersBody'), cards = el('ordersCards');
+  if(state.loading && !state.orders.length){
+    el('ordersEmpty').classList.add('hide');
+    body.innerHTML = '<tr><td colspan="8" class="sub" style="text-align:center;padding:30px">Loading orders…</td></tr>';
+    cards.innerHTML = '<div class="sub" style="text-align:center;padding:30px">Loading orders…</div>';
+    return;
+  }
   el('ordersEmpty').classList.toggle('hide', state.orders.length>0);
   if(!list.length){ body.innerHTML=''; cards.innerHTML=''; }
   else {
@@ -2401,7 +2417,7 @@ function showApp(session){
   el('loginView').classList.add('hide');
   el('setupView').classList.add('hide');
   el('appView').classList.remove('hide');
-  el('syncDot').classList.add('on'); el('syncTxt').textContent='Synced';
+  el('syncDot').classList.remove('on'); el('syncTxt').textContent='Loading…';
   loadAll();
 }
 function showLogin(){
