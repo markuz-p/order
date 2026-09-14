@@ -125,6 +125,10 @@ tbody tr:last-child td{border-bottom:none}
 .pcard .pf .cost{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:13px}
 .pcard .pf .cat{font-size:10.5px;background:#eef2f8;color:var(--muted);padding:2px 7px;border-radius:5px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em}
 .linep{font-size:10.5px;background:var(--navy);color:#fff;padding:2px 7px;border-radius:5px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em}
+.pcard .pstock{display:flex;align-items:center;gap:7px;margin-top:9px;font-size:12px;color:var(--muted)}
+.pcard .pstock .qty{font-weight:700;color:var(--ink);font-family:"IBM Plex Mono",monospace;min-width:22px;text-align:center}
+.pcard .pstock button{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:16px;line-height:1;cursor:pointer;flex:none}
+.pcard .pstock.zero .qty{color:var(--danger)}
 
 /* photo upload box */
 .photobox{display:flex;gap:12px;align-items:center}
@@ -993,8 +997,19 @@ function renderParts(){
           ${p.line?`<span class="linep">${esc(p.line)}</span>`:''}
           ${p.category?`<span class="cat">${esc(p.category)}</span>`:''}
         </div>
+        <div class="pstock ${(Number(p.on_hand)||0)===0?'zero':''}">On hand:
+          <button onclick="event.stopPropagation();adjustOnHand('${p.id}',-1)">−</button>
+          <span class="qty">${Number(p.on_hand)||0}</span>
+          <button onclick="event.stopPropagation();adjustOnHand('${p.id}',1)">＋</button>
+        </div>
       </div></div>`;
   }).join('');
+}
+async function adjustOnHand(id, delta){
+  const p=state.parts.find(x=>x.id===id); if(!p) return;
+  const q=Math.max(0,(Number(p.on_hand)||0)+delta);
+  p.on_hand=q; renderParts();                         // optimistic
+  reliableWrite('onhand:'+id, ()=>sb.from('parts').update({on_hand:q}).eq('id',id));
 }
 
 let _partPhoto = { path:null, url:null }; // staged photo for the open modal
@@ -1027,7 +1042,10 @@ function openPart(p=null){
         <div class="field"><label>Product line</label>
           <select id="pLine">${PART_LINES.map(l=>`<option ${(p?.line||'RP-90')===l?'selected':''}>${l}</option>`).join('')}</select></div>
       </div>
-      <div class="field"><label>Supplier</label><select id="pSupplier"><option value="">— None —</option>${supOpts}</select></div>
+      <div class="grid2">
+        <div class="field"><label>Supplier</label><select id="pSupplier"><option value="">— None —</option>${supOpts}</select></div>
+        <div class="field"><label>On hand qty</label><input id="pOnHand" type="number" min="0" step="1" value="${p?.on_hand??0}" /></div>
+      </div>
       <div class="field"><label>Notes</label><textarea id="pNotes">${esc(p?.notes||'')}</textarea></div>
     </div>
     <div class="mfoot">
@@ -1056,6 +1074,7 @@ async function savePart(){
     cost: el('pCost').value?parseFloat(el('pCost').value):null,
     category: el('pCat').value.trim()||null,
     line: el('pLine').value||null,
+    on_hand: el('pOnHand').value!==''?Number(el('pOnHand').value):0,
     supplier_id: el('pSupplier').value||null,
     notes: el('pNotes').value.trim()||null,
     photo_path: _partPhoto.path||null,
