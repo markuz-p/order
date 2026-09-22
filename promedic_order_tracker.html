@@ -1546,6 +1546,7 @@ function viewOrder(id){
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn sub" onclick="downloadPO('${o.id}')">⬇ PDF</button>
         <button class="btn sub" onclick="emailPO('${o.id}')">✉ Email PO</button>
+        <button class="btn sub" onclick="downloadRFQ('${o.id}')"><span class="ico">📨</span> RFQ</button>
         <button class="btn sub" onclick="openQuoteDoc('${o.id}')"><span class="ico">🧾</span> Quote</button>
         <button class="btn sub" onclick="reorderOrder('${o.id}')" title="Start a new order from this one">⧉ Reorder</button>
       </div>
@@ -2256,6 +2257,111 @@ function emailPO(id){
   const body = `Hello${r.sup.contact?' '+r.sup.contact:''},\n\nPlease find our purchase order ${r.o.po_number||''} attached (PDF just downloaded — attach it to this email).${acct}\n\nThank you,\n${brandName()}`;
   window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
   toast('PDF downloaded — attach it to the email draft');
+}
+
+/* ---------- RFQ (Request for Quote — you → vendor, asking for prices) ---------- */
+function buildRFQ(id){
+  const o = state.orders.find(x=>x.id===id); if(!o) return null;
+  const sup = state.suppliers.find(s=>s.id===o.supplier_id) || {};
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'letter' });
+  const blue=[31,111,178], red=[193,32,43], navy=[35,80,127],
+        ink=[45,55,72], muted=[120,132,150], line=[228,231,236];
+  const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=48, RX=PW-M;
+
+  // Masthead: logo + "Request for Quote"
+  let mastheadBottom=88;
+  try{ const [ow,oh]=brandLogoWH(); let lw=210,lh=lw*(oh/ow); if(lh>72){lh=72;lw=lh*(ow/oh);}
+    const data=brandLogo(); const fmt=/^data:image\/png/i.test(data)?'PNG':'JPEG';
+    doc.addImage(data,fmt,M,40,lw,lh); mastheadBottom=40+lh; }catch(e){}
+  doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(...muted);
+  doc.text('Request for Quote', M, mastheadBottom+24);
+  let y=mastheadBottom+24;
+
+  // Meta (right)
+  const rfqNo=`RFQ-${(o.po_number||o.id.slice(0,6))}`;
+  let my=44;
+  const metaLine=(label,val)=>{ doc.setFontSize(9); doc.setTextColor(...muted); doc.setFont('helvetica','normal');
+    doc.text(label.toUpperCase(), RX-190, my); doc.setTextColor(...navy); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text(String(val||'—'), RX, my, {align:'right'}); my+=17; };
+  metaLine('RFQ #', rfqNo);
+  metaLine('Date', fmtDate(o.order_date||new Date().toISOString().slice(0,10)));
+  if (sup.customer_number) metaLine('Our Account #', sup.customer_number);
+  if (o.build?.name) metaLine('Unit / Build', o.build.name);
+
+  y+=14; doc.setDrawColor(...line); doc.setLineWidth(1); doc.line(M,y,RX,y);
+
+  // Vendor block (left) + From block (right)
+  y+=22; const blockTop=y;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...ink); doc.text('TO (VENDOR)', M, y);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...navy);
+  doc.text(sup.name || o.supplier?.name || '—', M, y+17);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...muted); let sy=y+32;
+  if (sup.contact){ doc.text('Attn: '+sup.contact, M, sy); sy+=13; }
+  if (sup.email){ doc.text(sup.email, M, sy); sy+=13; }
+  if (sup.phone){ doc.text(sup.phone, M, sy); sy+=13; }
+
+  const SX=M+(PW-M*2)*0.55;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...ink); doc.text('FROM', SX, blockTop);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...navy); doc.text(brandName(), SX, blockTop+17);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...muted); let ty=blockTop+32;
+  doc.splitTextToSize(brandShipTo(), PW-M-SX).forEach(ln=>{ doc.text(ln, SX, ty); ty+=13; });
+  y=Math.max(sy, ty, blockTop+44)+8;
+
+  // Ask line
+  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...ink);
+  doc.text('Please provide unit pricing and lead time for the items below.', M, y); y+=14;
+
+  // Items table — blank price/lead columns for the vendor to fill in
+  const rows=(o.items||[]).map(i=>[ i.sku||'', i.description||'', String(i.qty||0), '', '' ]);
+  doc.autoTable({
+    startY: y,
+    head: [['SKU','Description','Qty','Unit Price','Lead Time']],
+    body: rows.length?rows:[['','(no items listed)','','','']],
+    theme:'grid',
+    headStyles:{ fillColor:[14,32,56], textColor:255, fontStyle:'bold', fontSize:9 },
+    bodyStyles:{ fontSize:9, textColor:[30,40,60], minCellHeight:22 },
+    columnStyles:{ 2:{halign:'center',cellWidth:40}, 3:{halign:'right',cellWidth:78}, 4:{halign:'center',cellWidth:78} },
+    margin:{ left:M, right:M },
+  });
+
+  // Reply prompt block (blank lines)
+  let ey=doc.lastAutoTable.finalY+22;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...ink);
+  doc.text('QUOTE VALID UNTIL:', M, ey);
+  doc.setDrawColor(...line); doc.line(M+118, ey+2, M+260, ey+2);
+  doc.text('ESTIMATED SHIP DATE:', SX, ey);
+  doc.setDrawColor(...line); doc.line(SX+128, ey+2, RX, ey+2);
+  ey+=26;
+  doc.text('NOTES / EXCEPTIONS:', M, ey); ey+=16;
+  doc.setDrawColor(...line);
+  for(let k=0;k<2;k++){ doc.line(M, ey, RX, ey); ey+=18; }
+
+  if (o.notes){ ey+=10; doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...red);
+    doc.text('OUR NOTES', M, ey); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...ink);
+    doc.text(doc.splitTextToSize(o.notes, PW-M*2), M, ey+13); }
+
+  // Footer
+  const fy=PH-40; doc.setDrawColor(...line); doc.setLineWidth(1); doc.line(M,fy-14,RX,fy-14);
+  doc.setFillColor(...blue); doc.rect(M,fy-4,20,4,'F'); doc.setFillColor(...red); doc.rect(M+20,fy-4,20,4,'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...muted);
+  doc.text('Powered by Piercy Software', RX, fy-1, {align:'right'});
+
+  return { doc, o, sup, rfqNo, filename:`RFQ_${rfqNo.replace(/[^\w.\-]/g,'_')}.pdf` };
+}
+function downloadRFQ(id){
+  const r=buildRFQ(id); if(!r){ toast('Could not build RFQ'); return; }
+  r.doc.save(r.filename); toast('RFQ downloaded');
+}
+function emailRFQ(id){
+  const r=buildRFQ(id); if(!r){ toast('Could not build RFQ'); return; }
+  r.doc.save(r.filename);
+  const to=r.sup.email||'';
+  const subj=`Request for Quote ${r.rfqNo} — ${brandName()}`.trim();
+  const acct=r.sup.customer_number ? `\nOur account #: ${r.sup.customer_number}` : '';
+  const body=`Hello${r.sup.contact?' '+r.sup.contact:''},\n\nCould you please quote pricing and lead time for the items on the attached RFQ ${r.rfqNo}? (PDF just downloaded — attach it to this email.)${acct}\n\nThank you,\n${brandName()}`;
+  window.location.href=`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+  toast('RFQ downloaded — attach it to the email draft');
 }
 
 /* ---------- Customer Quote (you → customer, at sell price) ---------- */
