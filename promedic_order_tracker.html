@@ -129,6 +129,16 @@ tbody tr:last-child td{border-bottom:none}
 .pcard .pstock .qty{font-weight:700;color:var(--ink);font-family:"IBM Plex Mono",monospace;min-width:22px;text-align:center}
 .pcard .pstock button{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:16px;line-height:1;cursor:pointer;flex:none}
 .pcard .pstock.zero .qty{color:var(--danger)}
+.lowb{font-size:10.5px;background:var(--danger);color:#fff;padding:2px 7px;border-radius:5px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em}
+.rl-group{margin-bottom:16px}
+.rl-vendor{font-family:Oswald,sans-serif;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--navy);border-bottom:2px solid var(--line);padding-bottom:4px;margin-bottom:6px}
+body.dark .rl-vendor{color:var(--brand)}
+.rl-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
+.rl-main{min-width:0}
+.rl-main strong{font-size:13.5px;color:var(--ink)}
+.rl-nums{text-align:right;white-space:nowrap;font-family:"IBM Plex Mono",monospace;font-size:13px}
+.rl-nums .rl-oh{font-weight:700;color:var(--ink)}
+.rl-nums .rl-oh.zero{color:var(--danger)}
 
 /* photo upload box */
 .photobox{display:flex;gap:12px;align-items:center}
@@ -427,6 +437,7 @@ body.dark .tr-fill{background:var(--amber)}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
           <input id="partSearch" placeholder="Search parts by name, SKU, category…" oninput="renderParts()" />
         </div>
+        <button class="pill ghost" onclick="openReorderList()" style="color:var(--ink)" title="Parts at or below their reorder point">⚠ Reorder <span id="reorderCount"></span></button>
         <button class="pill ghost" onclick="openBulkParts()" style="color:var(--ink)">⇪ Bulk Add</button>
         <button class="pill amber" onclick="openPart()" style="color:#3a2800">＋ Add Part</button>
       </div>
@@ -984,10 +995,13 @@ function renderParts(){
     return;
   }
   el('partsEmpty').classList.toggle('hide', state.parts.length>0);
+  const low = lowStockParts();
+  const rc = el('reorderCount'); if(rc) rc.textContent = low.length ? '('+low.length+')' : '';
   const list = filteredParts();
   grid.innerHTML = list.map(p=>{
     const url = partPhotoUrl(p.photo_path);
     const img = url ? `<img src="${url}" alt="" loading="lazy"/>` : `<span class="noimg">No photo</span>`;
+    const isLow = isLowStock(p);
     return `<div class="pcard" onclick="openPart(state.parts.find(x=>x.id==='${p.id}'))">
       <div class="ph">${img}</div>
       <div class="pb">
@@ -997,20 +1011,58 @@ function renderParts(){
           <span class="cost">${p.cost?money(p.cost):'—'}</span>
           ${p.line?`<span class="linep">${esc(p.line)}</span>`:''}
           ${p.category?`<span class="cat">${esc(p.category)}</span>`:''}
+          ${isLow?`<span class="lowb">Reorder</span>`:''}
         </div>
         <div class="pstock ${(Number(p.on_hand)||0)===0?'zero':''}">On hand:
           <button onclick="event.stopPropagation();adjustOnHand('${p.id}',-1)">−</button>
           <span class="qty">${Number(p.on_hand)||0}</span>
           <button onclick="event.stopPropagation();adjustOnHand('${p.id}',1)">＋</button>
+          ${Number(p.reorder_point)>0?`<span class="sub" style="margin-left:6px">/ ${Number(p.reorder_point)}</span>`:''}
         </div>
       </div></div>`;
   }).join('');
 }
+function isLowStock(p){ const rp=Number(p.reorder_point)||0; return rp>0 && (Number(p.on_hand)||0)<=rp; }
+function lowStockParts(){ return (state.parts||[]).filter(isLowStock); }
 async function adjustOnHand(id, delta){
   const p=state.parts.find(x=>x.id===id); if(!p) return;
   const q=Math.max(0,(Number(p.on_hand)||0)+delta);
-  p.on_hand=q; renderParts();                         // optimistic
+  p.on_hand=q; renderParts(); if(el('reorderList')) renderReorderList();   // optimistic
   reliableWrite('onhand:'+id, ()=>sb.from('parts').update({on_hand:q}).eq('id',id));
+}
+function openReorderList(){
+  modal(`<div class="mhead"><h2>Reorder worklist</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody" id="reorderBody"><div id="reorderList"></div></div>
+    <div class="mfoot"><span class="sub" id="reorderFoot"></span>
+      <button class="btn sub" onclick="closeModal()">Close</button></div>`);
+  renderReorderList();
+}
+function renderReorderList(){
+  const box=el('reorderList'); if(!box) return;
+  const low=lowStockParts();
+  const foot=el('reorderFoot');
+  if(!low.length){
+    box.innerHTML='<div class="sub" style="padding:8px 0">Nothing to reorder — every tracked part is above its reorder point.</div>';
+    if(foot) foot.textContent='';
+    return;
+  }
+  // group by vendor
+  const groups={};
+  low.forEach(p=>{ const v=p.supplier?.name||'— No vendor —'; (groups[v]=groups[v]||[]).push(p); });
+  const names=Object.keys(groups).sort((a,b)=>a.localeCompare(b));
+  box.innerHTML=names.map(v=>{
+    const rows=groups[v].sort((a,b)=>(a.description||'').localeCompare(b.description||'')).map(p=>{
+      const oh=Number(p.on_hand)||0, rp=Number(p.reorder_point)||0, sug=Math.max(rp-oh, rp>0?1:0);
+      return `<div class="rl-row">
+        <div class="rl-main"><strong>${esc(p.description||p.sku||'Part')}</strong>
+          <div class="sub mono">${esc(p.sku||'—')}${p.line?' · '+esc(p.line):''}</div></div>
+        <div class="rl-nums"><span class="rl-oh ${oh===0?'zero':''}">${oh}</span><span class="sub"> / ${rp}</span>
+          <div class="sub">suggest +${sug}</div></div>
+      </div>`;
+    }).join('');
+    return `<div class="rl-group"><div class="rl-vendor">${esc(v)} <span class="sub">(${groups[v].length})</span></div>${rows}</div>`;
+  }).join('');
+  if(foot) foot.textContent = low.length+' part'+(low.length>1?'s':'')+' across '+names.length+' vendor'+(names.length>1?'s':'');
 }
 
 let _partPhoto = { path:null, url:null }; // staged photo for the open modal
@@ -1043,9 +1095,10 @@ function openPart(p=null){
         <div class="field"><label>Product line</label>
           <select id="pLine">${PART_LINES.map(l=>`<option ${(p?.line||'RP-90')===l?'selected':''}>${l}</option>`).join('')}</select></div>
       </div>
+      <div class="field"><label>Supplier</label><select id="pSupplier"><option value="">— None —</option>${supOpts}</select></div>
       <div class="grid2">
-        <div class="field"><label>Supplier</label><select id="pSupplier"><option value="">— None —</option>${supOpts}</select></div>
         <div class="field"><label>On hand qty</label><input id="pOnHand" type="number" min="0" step="1" value="${p?.on_hand??0}" /></div>
+        <div class="field"><label>Reorder point</label><input id="pReorder" type="number" min="0" step="1" value="${p?.reorder_point??0}" /><div class="sub" style="margin-top:4px">Flag when on-hand is at or below this. 0 = don't track.</div></div>
       </div>
       <div class="field"><label>Notes</label><textarea id="pNotes">${esc(p?.notes||'')}</textarea></div>
     </div>
@@ -1076,6 +1129,7 @@ async function savePart(){
     category: el('pCat').value.trim()||null,
     line: el('pLine').value||null,
     on_hand: el('pOnHand').value!==''?Number(el('pOnHand').value):0,
+    reorder_point: el('pReorder').value!==''?Number(el('pReorder').value):0,
     supplier_id: el('pSupplier').value||null,
     notes: el('pNotes').value.trim()||null,
     photo_path: _partPhoto.path||null,
