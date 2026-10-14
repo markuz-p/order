@@ -129,6 +129,7 @@ tbody tr:last-child td{border-bottom:none}
 .pcard .pstock .qty{font-weight:700;color:var(--ink);font-family:"IBM Plex Mono",monospace;min-width:22px;text-align:center}
 .pcard .pstock button{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:16px;line-height:1;cursor:pointer;flex:none}
 .pcard .pstock.zero .qty{color:var(--danger)}
+.pcard .pstamp{font-size:10.5px;color:var(--muted);margin-top:4px}
 .lowb{font-size:10.5px;background:var(--danger);color:#fff;padding:2px 7px;border-radius:5px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em}
 .rl-group{margin-bottom:16px}
 .rl-vendor{font-family:Oswald,sans-serif;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--navy);border-bottom:2px solid var(--line);padding-bottom:4px;margin-bottom:6px}
@@ -655,6 +656,7 @@ function updateSaveUi(){
 function timeAgo(ts){ if(!ts) return '—'; const d=(Date.now()-new Date(ts))/1000;
   if(d<60)return 'just now'; if(d<3600)return Math.floor(d/60)+'m ago'; if(d<86400)return Math.floor(d/3600)+'h ago';
   return Math.floor(d/86400)+'d ago'; }
+function fmtStamp(ts){ if(!ts) return '—'; return new Date(ts).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}); }
 function isLate(o){ return o.expected_date && o.expected_date<today() && !['received','cancelled'].includes(o.status); }
 function orderTotals(o){ const items=o.items||[]; const qty=items.reduce((a,i)=>a+(Number(i.qty)||0),0);
   const est=Number(o.estimated_total)|| items.reduce((a,i)=>a+((Number(i.qty)||0)*(Number(i.unit_price)||0)),0);
@@ -1019,6 +1021,7 @@ function renderParts(){
           <button onclick="event.stopPropagation();adjustOnHand('${p.id}',1)">＋</button>
           ${Number(p.reorder_point)>0?`<span class="sub" style="margin-left:6px">/ ${Number(p.reorder_point)}</span>`:''}
         </div>
+        ${p.stock_updated_at?`<div class="pstamp" title="${esc(fmtStamp(p.stock_updated_at))}">Qty updated ${esc(timeAgo(p.stock_updated_at))}</div>`:''}
       </div></div>`;
   }).join('');
 }
@@ -1027,8 +1030,9 @@ function lowStockParts(){ return (state.parts||[]).filter(isLowStock); }
 async function adjustOnHand(id, delta){
   const p=state.parts.find(x=>x.id===id); if(!p) return;
   const q=Math.max(0,(Number(p.on_hand)||0)+delta);
-  p.on_hand=q; renderParts(); if(el('reorderList')) renderReorderList();   // optimistic
-  reliableWrite('onhand:'+id, ()=>sb.from('parts').update({on_hand:q}).eq('id',id));
+  const now=new Date().toISOString();
+  p.on_hand=q; p.stock_updated_at=now; renderParts(); if(el('reorderList')) renderReorderList();   // optimistic
+  reliableWrite('onhand:'+id, ()=>sb.from('parts').update({on_hand:q, stock_updated_at:now}).eq('id',id));
 }
 function openReorderList(){
   modal(`<div class="mhead"><h2>Reorder worklist</h2><button class="x" onclick="closeModal()">✕</button></div>
@@ -1134,6 +1138,9 @@ async function savePart(){
     notes: el('pNotes').value.trim()||null,
     photo_path: _partPhoto.path||null,
   };
+  // stamp the on-hand timestamp when the quantity actually changed (or on a brand-new part with stock)
+  const prevQty = state.editingPart ? (Number(state.editingPart.on_hand)||0) : null;
+  if(prevQty===null ? rec.on_hand>0 : rec.on_hand!==prevQty){ rec.stock_updated_at = new Date().toISOString(); }
   let err;
   if(state.editingPart){ ({error:err} = await sb.from('parts').update(rec).eq('id', state.editingPart.id)); }
   else { ({error:err} = await sb.from('parts').insert(rec)); }
