@@ -130,6 +130,14 @@ tbody tr:last-child td{border-bottom:none}
 .pcard .pstock button{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:16px;line-height:1;cursor:pointer;flex:none}
 .pcard .pstock.zero .qty{color:var(--danger)}
 .pcard .pstamp{font-size:10.5px;color:var(--muted);margin-top:4px}
+.slog-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.slog-main .mono{font-weight:700;color:var(--ink);font-size:14px}
+.slog-delta{font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:12px;margin-left:6px}
+.slog-delta.up{background:#dff3e6;color:#1c6b3f}
+.slog-delta.dn{background:#fde2e2;color:#a01919}
+body.dark .slog-delta.up{background:#14361f;color:#5fd08a}
+body.dark .slog-delta.dn{background:#3a1718;color:#f08a8a}
+.slog-when{white-space:nowrap;text-align:right;flex:none}
 .lowb{font-size:10.5px;background:var(--danger);color:#fff;padding:2px 7px;border-radius:5px;font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em}
 .rl-group{margin-bottom:16px}
 .rl-vendor{font-family:Oswald,sans-serif;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--navy);border-bottom:2px solid var(--line);padding-bottom:4px;margin-bottom:6px}
@@ -592,7 +600,7 @@ async function doUndo(){
 async function exportBackup(){
   toast('Preparing backup…');
   try{
-    const tables=['suppliers','builds','orders','order_items','packing_slips','parts','attachments','app_settings','rmas','order_notes'];
+    const tables=['suppliers','builds','orders','order_items','packing_slips','parts','attachments','app_settings','rmas','order_notes','stock_log'];
     const dump={ app:'Piercy Order Tracker', version:1, exported_at:new Date().toISOString(), tables:{} };
     for(const t of tables){
       const {data,error}=await sb.from(t).select('*');
@@ -1027,12 +1035,46 @@ function renderParts(){
 }
 function isLowStock(p){ const rp=Number(p.reorder_point)||0; return rp>0 && (Number(p.on_hand)||0)<=rp; }
 function lowStockParts(){ return (state.parts||[]).filter(isLowStock); }
+function logStock(partId, fromQty, toQty, reason){
+  // records a row in the history log; best-effort, won't block the quantity change
+  try{ sb.from('stock_log').insert({ part_id:partId, from_qty:fromQty, to_qty:toQty,
+    delta:(Number(toQty)||0)-(Number(fromQty)||0), reason:reason||null }); }catch(e){}
+}
 async function adjustOnHand(id, delta){
   const p=state.parts.find(x=>x.id===id); if(!p) return;
-  const q=Math.max(0,(Number(p.on_hand)||0)+delta);
+  const from=Number(p.on_hand)||0;
+  const q=Math.max(0,from+delta);
+  if(q===from) return;                                     // clamped at 0, nothing changed
   const now=new Date().toISOString();
   p.on_hand=q; p.stock_updated_at=now; renderParts(); if(el('reorderList')) renderReorderList();   // optimistic
   reliableWrite('onhand:'+id, ()=>sb.from('parts').update({on_hand:q, stock_updated_at:now}).eq('id',id));
+  logStock(id, from, q, null);
+}
+async function openStockHistory(partId){
+  const p=state.parts.find(x=>x.id===partId)||{};
+  modal(`<div class="mhead"><h2>Stock history</h2><button class="x" onclick="openPart(state.parts.find(x=>x.id==='${partId}'))">✕</button></div>
+    <div class="mbody">
+      <div class="drow"><span class="k">Part</span><span><strong>${esc(p.description||p.sku||'Part')}</strong>${p.sku?' · <span class="mono">'+esc(p.sku)+'</span>':''}</span></div>
+      <div class="drow"><span class="k">On hand now</span><span class="mono">${Number(p.on_hand)||0}</span></div>
+      <div class="section-lb">Every quantity change <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">newest first</span></div>
+      <div id="stockLogBox"><div class="sub">Loading…</div></div>
+    </div>
+    <div class="mfoot"><span class="sub" id="stockLogFoot"></span>
+      <button class="btn sub" onclick="openPart(state.parts.find(x=>x.id==='${partId}'))">Back</button></div>`);
+  const box=el('stockLogBox');
+  const {data,error}=await sb.from('stock_log').select('*').eq('part_id',partId).order('created_at',{ascending:false});
+  if(error){ box.innerHTML='<div class="sub">History isn\'t set up yet — run the stock-log add-on in Supabase.</div>'; return; }
+  if(!data||!data.length){ box.innerHTML='<div class="sub">No changes recorded yet. From now on, every quantity change shows up here.</div>'; return; }
+  box.innerHTML=data.map(r=>{
+    const d=Number(r.delta)||0; const up=d>0;
+    const badge=`<span class="slog-delta ${up?'up':'dn'}">${up?'+':''}${d}</span>`;
+    return `<div class="slog-row">
+      <div class="slog-main"><span class="mono">${Number(r.from_qty)||0} → ${Number(r.to_qty)||0}</span> ${badge}
+        ${r.reason?`<div class="sub">${esc(r.reason)}</div>`:''}</div>
+      <div class="slog-when sub" title="${esc(fmtStamp(r.created_at))}">${esc(fmtStamp(r.created_at))}</div>
+    </div>`;
+  }).join('');
+  const foot=el('stockLogFoot'); if(foot) foot.textContent=data.length+' change'+(data.length>1?'s':'')+' recorded';
 }
 function openReorderList(){
   modal(`<div class="mhead"><h2>Reorder worklist</h2><button class="x" onclick="closeModal()">✕</button></div>
@@ -1107,7 +1149,7 @@ function openPart(p=null){
       <div class="field"><label>Notes</label><textarea id="pNotes">${esc(p?.notes||'')}</textarea></div>
     </div>
     <div class="mfoot">
-      <div style="display:flex;gap:8px">${p?`<button class="btn warn" onclick="deletePart('${p.id}')">Delete</button><button class="btn sub" onclick="qrForPart('${p.id}')">▦ QR label</button>`:''}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${p?`<button class="btn warn" onclick="deletePart('${p.id}')">Delete</button><button class="btn sub" onclick="qrForPart('${p.id}')">▦ QR</button><button class="btn sub" onclick="openStockHistory('${p.id}')">🕑 History</button>`:''}</div>
       <div style="display:flex;gap:8px">
         <button class="btn sub" onclick="closeModal()">Cancel</button>
         <button class="btn primary" onclick="savePart()">${p?'Save changes':'Add part'}</button>
@@ -1140,11 +1182,13 @@ async function savePart(){
   };
   // stamp the on-hand timestamp when the quantity actually changed (or on a brand-new part with stock)
   const prevQty = state.editingPart ? (Number(state.editingPart.on_hand)||0) : null;
-  if(prevQty===null ? rec.on_hand>0 : rec.on_hand!==prevQty){ rec.stock_updated_at = new Date().toISOString(); }
-  let err;
+  const qtyChanged = prevQty===null ? rec.on_hand>0 : rec.on_hand!==prevQty;
+  if(qtyChanged){ rec.stock_updated_at = new Date().toISOString(); }
+  let err, newId=state.editingPart?.id;
   if(state.editingPart){ ({error:err} = await sb.from('parts').update(rec).eq('id', state.editingPart.id)); }
-  else { ({error:err} = await sb.from('parts').insert(rec)); }
+  else { const r = await sb.from('parts').insert(rec).select('id').single(); err=r.error; newId=r.data?.id; }
   if(err){ toast('Save failed: '+err.message); return; }
+  if(qtyChanged && newId){ logStock(newId, prevQty===null?0:prevQty, rec.on_hand, 'Set in part editor'); }
   closeModal(); toast(state.editingPart?'Part updated':'Part added'); await loadAll(); setTab('parts');
 }
 async function deletePart(id){
