@@ -487,6 +487,7 @@ body.dark .tr-fill{background:var(--amber)}
           <input id="searchBox" placeholder="Search PO, supplier, unit, part, tracking…" oninput="render()" />
         </div>
         <button class="fchip" onclick="exportCSV()">⭳ Export CSV</button>
+        <button class="fchip" onclick="exportLineItemsCSV()" title="One row per part per order — for BOMs and spend by part">⭳ Line Items CSV</button>
         <button class="fchip" onclick="exportBackup()" title="Download a full backup of all your data">⤓ Backup</button>
       </div>
       <div class="panel">
@@ -2305,6 +2306,35 @@ function exportCSV(){
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download=`promedic_orders_${today()}.csv`; a.click();
   toast('CSV exported');
+}
+
+/* Line-items export: one row per part per order. Category/Line come from the
+   Parts catalog, matched by SKU. Orders with no line items still get one row
+   (flagged) so their dollars aren't silently dropped. Respects current filters. */
+function exportLineItemsCSV(){
+  const bySku={};
+  (state.parts||[]).forEach(p=>{ const k=(p.sku||'').trim().toLowerCase(); if(k&&!bySku[k]) bySku[k]=p; });
+  const rows=[['PO','Supplier','Unit','Status','Order Date','SKU','Description','Category','Line',
+    'Qty','Received Qty','Unit Price','Line Total','In Catalog']];
+  let n=0, noItems=0;
+  filteredOrders().forEach(o=>{
+    const head=[o.po_number||'',o.supplier?.name||'',o.build?.name||'',o.status,o.order_date||''];
+    const items=o.items||[];
+    if(!items.length){ noItems++;
+      rows.push([...head,'','(no line items — order total only)','','',
+        '','','',Number(orderTotals(o).est||0).toFixed(2),'']); return; }
+    items.forEach(i=>{ n++;
+      const p=bySku[(i.sku||'').trim().toLowerCase()];
+      const qty=Number(i.qty)||0, price=Number(i.unit_price)||0;
+      rows.push([...head,i.sku||'',i.description||'',p?.category||'',p?.line||'',
+        qty,Number(i.received_qty)||0,price.toFixed(2),(qty*price).toFixed(2),p?'Yes':'No']);
+    });
+  });
+  const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download=`promedic_line_items_${today()}.csv`; a.click();
+  toast(`Exported ${n} line items`+(noItems?` · ${noItems} orders had none`:''));
 }
 
 /* ---------- Print PO ---------- */
