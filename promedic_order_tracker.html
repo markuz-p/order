@@ -252,6 +252,25 @@ body.dark .tr-fill{background:var(--amber)}
 .recv-actionbar .btn{flex:1;padding:15px;font-size:15px;border-radius:12px}
 .recv-bigbtn{width:100%;padding:15px;border-radius:12px;border:1px dashed var(--line);background:var(--bg);color:var(--ink);font-size:15px;font-weight:700;cursor:pointer;margin-bottom:12px}
 
+/* continuous in-app QR scanner */
+.scan-wrap{position:fixed;inset:0;background:#000;z-index:78;display:flex;flex-direction:column}
+.scan-wrap .recv-head{background:var(--navy);color:#fff}
+.scan-stage{position:relative;flex:1;overflow:hidden;background:#000;display:grid;place-items:center}
+#scanVideo{width:100%;height:100%;object-fit:cover}
+.scan-reticle{position:absolute;top:50%;left:50%;width:64vw;max-width:290px;aspect-ratio:1;transform:translate(-50%,-50%);border:3px solid rgba(255,255,255,.9);border-radius:18px;box-shadow:0 0 0 2000px rgba(0,0,0,.34)}
+.scan-hint{position:absolute;bottom:18px;left:0;right:0;text-align:center;color:#fff;font-size:14px;font-weight:600;text-shadow:0 1px 5px rgba(0,0,0,.8);padding:0 18px}
+.scan-panel{background:var(--surface);border-top:1px solid var(--line)}
+.scan-panel:empty{display:none}
+.scan-card{max-width:640px;margin:0 auto;padding:16px 16px 20px;text-align:center}
+.sc-name{font-weight:700;font-size:18px;color:var(--ink);line-height:1.25}
+.sc-sub{color:var(--muted);font-size:13px;margin-top:3px}
+.sc-row{display:flex;align-items:center;justify-content:center;gap:12px;margin:15px 0 2px}
+.sc-step{width:58px;height:58px;border-radius:14px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:28px;font-weight:700;line-height:1;cursor:pointer}
+.sc-step:active{background:var(--line)}
+.sc-qty{width:100px;height:58px;text-align:center;font-size:26px;font-weight:700;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink)}
+.sc-onhand{margin-top:3px;text-transform:uppercase;letter-spacing:.04em;font-size:11px;font-family:Oswald,sans-serif}
+.sc-next{width:100%;max-width:360px;margin:16px auto 0;display:block;padding:15px;font-size:16px;border-radius:13px}
+
 .mfoot{display:flex;gap:10px;justify-content:space-between;align-items:center;padding:16px 22px;border-top:1px solid var(--line);position:sticky;bottom:0;background:#fff;border-radius:0 0 16px 16px;flex-wrap:wrap}
 .btn{border:none;border-radius:10px;padding:11px 18px;font-weight:600;font-size:14px}
 .btn.primary{background:var(--brand);color:#fff}
@@ -448,6 +467,7 @@ body.dark .tr-fill{background:var(--amber)}
         <div class="hmenu" id="hmenu">
           <button class="pill ghost" onclick="openBuilds()"><span class="ico">🚑</span> Units</button>
           <button class="pill ghost" onclick="openSuppliers()"><span class="ico">🏢</span> Suppliers</button>
+          <button class="pill ghost" onclick="setTab('parts');openScan()" title="Scan part labels with your camera"><span class="ico">📷</span> Scan</button>
           <button class="pill ghost" onclick="openReceive()" title="Receiving mode (phone-friendly)"><span class="ico">📦</span> Receive</button>
           <button class="pill ghost" onclick="window.open('https://mail.google.com/','_blank')" title="Open Gmail">✉ Gmail</button>
           <button class="pill ghost" onclick="window.open('https://drive.google.com/','_blank')" title="Open Google Drive"><span class="ico">📁</span> Drive</button>
@@ -487,7 +507,6 @@ body.dark .tr-fill{background:var(--amber)}
           <input id="searchBox" placeholder="Search PO, supplier, unit, part, tracking…" oninput="render()" />
         </div>
         <button class="fchip" onclick="exportCSV()">⭳ Export CSV</button>
-        <button class="fchip" onclick="exportLineItemsCSV()" title="One row per part per order — for BOMs and spend by part">⭳ Line Items CSV</button>
         <button class="fchip" onclick="exportBackup()" title="Download a full backup of all your data">⤓ Backup</button>
       </div>
       <div class="panel">
@@ -512,9 +531,10 @@ body.dark .tr-fill{background:var(--amber)}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
           <input id="partSearch" placeholder="Search parts by name, SKU, category…" oninput="renderParts()" />
         </div>
+        <button class="pill amber" onclick="openScan()" style="color:#3a2800" title="Scan part labels with your camera"><span class="ico">📷</span> Scan</button>
         <button class="pill ghost" onclick="openReorderList()" style="color:var(--ink)" title="Parts at or below their reorder point">⚠ Reorder <span id="reorderCount"></span></button>
         <button class="pill ghost" onclick="openBulkParts()" style="color:var(--ink)">⇪ Bulk Add</button>
-        <button class="pill amber" onclick="openPart()" style="color:#3a2800">＋ Add Part</button>
+        <button class="pill ghost" onclick="openPart()" style="color:var(--ink)">＋ Add Part</button>
       </div>
       <div id="partLineChips" style="display:flex;gap:8px;margin:-6px 0 14px">
         <button class="fchip on" data-ln="all" onclick="setPartLine('all')">All</button>
@@ -604,6 +624,7 @@ body.dark .tr-fill{background:var(--amber)}
 <div id="modalRoot"></div>
 <div id="pickerRoot"></div>
 <div id="recvRoot"></div>
+<div id="scanRoot"></div>
 <div id="saveChip" class="save-chip hide"></div>
 <div id="toast" class="toast"></div>
 
@@ -1885,6 +1906,121 @@ function recvMarkReceived(){
 }
 function closeReceive(){ el('recvRoot').innerHTML=''; state.recvOrderId=null; render(); }
 
+/* ====================== CONTINUOUS IN-APP QR SCANNER ======================
+   Reads the same labels you already printed (each holds the part's link),
+   keeps the camera running, and shows each part so you adjust the count
+   without ever leaving the app. */
+let _scan={stream:null,raf:null,detector:null,video:null,canvas:null,ctx:null,paused:false,lastId:null,lastAt:0};
+function openScan(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ toast('This browser can\'t open the camera. Try Chrome or Safari.'); return; }
+  el('scanRoot').innerHTML=`
+    <div class="scan-wrap">
+      <div class="recv-head">
+        <h2>Scan parts<div class="rh-sub">Point the camera at a label</div></h2>
+        <button onclick="closeScan()">Done</button>
+      </div>
+      <div class="scan-stage">
+        <video id="scanVideo" playsinline muted></video>
+        <div class="scan-reticle"></div>
+        <div class="scan-hint" id="scanHint">Starting camera…</div>
+      </div>
+      <div class="scan-panel" id="scanPanel"></div>
+    </div>`;
+  startScanCamera();
+}
+async function startScanCamera(){
+  const video=el('scanVideo'); _scan.video=video;
+  try{
+    _scan.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+    video.srcObject=_scan.stream; video.setAttribute('playsinline',''); await video.play();
+    setScanHint('Point at a part label');
+  }catch(e){
+    setScanHint('Camera blocked — allow camera access for this site, then reopen Scan.',true); return;
+  }
+  if('BarcodeDetector' in window){ try{ _scan.detector=new BarcodeDetector({formats:['qr_code']}); }catch(e){ _scan.detector=null; } }
+  if(!_scan.detector){ await loadJsQR(); }   // fallback for browsers without a built-in reader (e.g. iPhone Safari)
+  _scan.canvas=document.createElement('canvas'); _scan.ctx=_scan.canvas.getContext('2d',{willReadFrequently:true});
+  _scan.paused=false; scanTick();
+}
+function loadJsQR(){
+  if(window.jsQR) return Promise.resolve();
+  return new Promise(res=>{ const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+    s.onload=res; s.onerror=res; document.head.appendChild(s); });
+}
+async function scanTick(){
+  if(!_scan.stream) return;
+  if(!_scan.paused && _scan.video && _scan.video.readyState>=2){
+    let raw=null;
+    try{
+      if(_scan.detector){
+        const codes=await _scan.detector.detect(_scan.video);
+        if(codes&&codes.length) raw=codes[0].rawValue;
+      }else if(window.jsQR){
+        const v=_scan.video,w=v.videoWidth,h=v.videoHeight;
+        if(w&&h){ _scan.canvas.width=w; _scan.canvas.height=h; _scan.ctx.drawImage(v,0,0,w,h);
+          const img=_scan.ctx.getImageData(0,0,w,h); const r=window.jsQR(img.data,w,h); if(r) raw=r.data; }
+      }
+    }catch(e){}
+    if(raw) onScanResult(raw);
+  }
+  if(_scan.stream) _scan.raf=requestAnimationFrame(scanTick);   // stop cleanly once the camera is closed
+}
+function onScanResult(raw){
+  const m=String(raw).match(/[#&]part=([\w-]+)/);
+  if(!m) return;                               // not one of our part labels — keep scanning
+  const id=m[1], now=Date.now();
+  if(id===_scan.lastId && now-_scan.lastAt<1600) return;   // ignore the same code held in view
+  _scan.lastId=id; _scan.lastAt=now;
+  const p=state.parts.find(x=>x.id===id);
+  if(!p){ setScanHint('That label isn\'t in your catalog',false,1800); return; }
+  _scan.paused=true;
+  if(navigator.vibrate){ try{ navigator.vibrate(30); }catch(e){} }
+  renderScanPanel(p.id);
+}
+function renderScanPanel(id){
+  const p=state.parts.find(x=>x.id===id); if(!p){ scanResume(); return; }
+  const oh=Number(p.on_hand)||0;
+  el('scanPanel').innerHTML=`
+    <div class="scan-card">
+      <div class="sc-name">${esc(p.description||'Part')}</div>
+      <div class="sc-sub">${esc(p.sku||'—')}${p.line?' · '+esc(p.line):''}${p.supplier?.name?' · '+esc(p.supplier.name):''}</div>
+      <div class="sc-row">
+        <button class="sc-step" onclick="scanAdjust('${p.id}',-1)">−</button>
+        <input id="scanQty" class="sc-qty mono" type="number" min="0" value="${oh}" onchange="scanSetExact('${p.id}',this.value)"/>
+        <button class="sc-step" onclick="scanAdjust('${p.id}',1)">＋</button>
+      </div>
+      <div class="sc-onhand sub">On hand</div>
+      <button class="btn primary sc-next" onclick="scanResume()">Scan next part ›</button>
+    </div>`;
+}
+function scanApply(id,newQ,reason){
+  const p=state.parts.find(x=>x.id===id); if(!p) return;
+  const from=Number(p.on_hand)||0, q=Math.max(0,Number(newQ)||0);
+  const i=el('scanQty'); if(i) i.value=q;
+  if(q===from) return;
+  const now=new Date().toISOString();
+  p.on_hand=q; p.stock_updated_at=now;
+  renderParts(); if(el('reorderList')) renderReorderList();
+  reliableWrite('onhand:'+id, ()=>sb.from('parts').update({on_hand:q,stock_updated_at:now}).eq('id',id));
+  logStock(id, from, q, reason||'Scanned');
+}
+function scanAdjust(id,delta){ const p=state.parts.find(x=>x.id===id); if(!p) return; scanApply(id,(Number(p.on_hand)||0)+delta,'Scanned ±'); }
+function scanSetExact(id,val){ scanApply(id,val,'Scanned count'); }
+function scanResume(){ const pan=el('scanPanel'); if(pan) pan.innerHTML=''; _scan.lastAt=Date.now(); _scan.paused=false; setScanHint('Point at a part label'); }
+function setScanHint(msg,isErr,autoClear){ const h=el('scanHint'); if(!h) return;
+  h.innerHTML = isErr ? '<span style="color:#ffb4b4">'+msg+'</span>' : msg;
+  clearTimeout(h._t);
+  if(autoClear) h._t=setTimeout(()=>{ if(el('scanHint')) el('scanHint').textContent='Point at a part label'; },autoClear);
+}
+function closeScan(){
+  _scan.paused=true;
+  if(_scan.raf) cancelAnimationFrame(_scan.raf);
+  if(_scan.stream){ _scan.stream.getTracks().forEach(t=>{ try{t.stop()}catch(e){} }); }
+  _scan={stream:null,raf:null,detector:null,video:null,canvas:null,ctx:null,paused:false,lastId:null,lastAt:0};
+  el('scanRoot').innerHTML=''; render();
+}
+
 /* ---------- Attachments (Supabase Storage) ---------- */
 async function loadAttachments(orderId){
   const box=document.querySelector('#attList'); if(!box) return;
@@ -2306,35 +2442,6 @@ function exportCSV(){
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download=`promedic_orders_${today()}.csv`; a.click();
   toast('CSV exported');
-}
-
-/* Line-items export: one row per part per order. Category/Line come from the
-   Parts catalog, matched by SKU. Orders with no line items still get one row
-   (flagged) so their dollars aren't silently dropped. Respects current filters. */
-function exportLineItemsCSV(){
-  const bySku={};
-  (state.parts||[]).forEach(p=>{ const k=(p.sku||'').trim().toLowerCase(); if(k&&!bySku[k]) bySku[k]=p; });
-  const rows=[['PO','Supplier','Unit','Status','Order Date','SKU','Description','Category','Line',
-    'Qty','Received Qty','Unit Price','Line Total','In Catalog']];
-  let n=0, noItems=0;
-  filteredOrders().forEach(o=>{
-    const head=[o.po_number||'',o.supplier?.name||'',o.build?.name||'',o.status,o.order_date||''];
-    const items=o.items||[];
-    if(!items.length){ noItems++;
-      rows.push([...head,'','(no line items — order total only)','','',
-        '','','',Number(orderTotals(o).est||0).toFixed(2),'']); return; }
-    items.forEach(i=>{ n++;
-      const p=bySku[(i.sku||'').trim().toLowerCase()];
-      const qty=Number(i.qty)||0, price=Number(i.unit_price)||0;
-      rows.push([...head,i.sku||'',i.description||'',p?.category||'',p?.line||'',
-        qty,Number(i.received_qty)||0,price.toFixed(2),(qty*price).toFixed(2),p?'Yes':'No']);
-    });
-  });
-  const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  a.download=`promedic_line_items_${today()}.csv`; a.click();
-  toast(`Exported ${n} line items`+(noItems?` · ${noItems} orders had none`:''));
 }
 
 /* ---------- Print PO ---------- */
