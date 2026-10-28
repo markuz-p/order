@@ -3,6 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#0E2038" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Order Tracker" />
+<link id="appManifest" rel="manifest" />
+<link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAYAAAA9zQYyAAADmklEQVR42u3csW5aWRSG0XuOCKV7Orcu0jtSZCmvkAflFSJZSKGhSuGWzj1lXNgVkeIEwQUMZ++zVjPNaOYavvln22amDA24ub1/HQhvs16Waz9DETCZAi8iJlPcRcRkirsImUxhVzGT6YcBRchkWusqZjKtdREymda6iplMa13FTKaoq5jJFHUVM5mirmImU9RVzGSKuoqZTFFXLxOZVOtMppWuYiZT1E4O8p8c1pmoK13FTKaonRzkPTmsM9FX2kKT/5tCCB+0c4MMZ4eFxskBTQft3CDL2WGhcXKAoOECivsZCw2CBkGDoBE0CBoEDR9okvGLen56PNtfa3b34OsTdPw3uhfb1yxL2BMhkynsKmYyvZ6+KSSV0EFbZ6+rhQ7+5vqHOGnQl3xjW4mox6/ZQid9gy2zoNNEJebDTbwE4rLQIGgQNAgaQYOgQdAgaBA0ggZBg6BB0CBoBA2CBkHDWXX7X6z8+Pmr+Wf89uXz3j/nZT4dPn3/reSeFzpCzIc858t8+tcf6TDoKDGPfd6X+VTYbui4dsXbe9TdBX3IXdr68+6Ltue17nKho0R9ynP2+o1itz/liLbUTgoL3c3dbJ0FnXaFe/+ZtKAbjfl91E4NQXd3H/uNoaCbCfl/MY/5TaCYBR1ilZ0agg7lHMtqnQWNoGlxpa2zoNNELeZ/+YB/Q77q0UJniXkYhmExW1lnQeeIeUzUYhZ0WIvZSsCC3i3Cx0a3K72Yrf487zZqcQs6bNTvn1PM+/mAPxYaBA2CBkEjaBA0CBoEDYJG0BCcD/g3zK/nLXSamCM9p6BFImpBg6DD36XuaEGniUTM4/mAPxYaBA2CBkEjaBA0CBoEDYJG0CBoEDQIGgSNoEHQIGgQNAgaQYOgQdAgaBA0ggZBg6BB0JAh6Nndg3fP62uhsdBWxDoLGgRtpb2eJyo3t/evWd6M56dHRXY+DKmCFrZ/w6UMGjc05Ah6s14WLwMZbNbLYqFxcoCg4VJBu6PJcD9baJwcECJoZwfRzw0LjZMDwgTt7CDyuWGhyX9yWGmirvPOhRY1EWN2cpD/5LDSRF3nvQstaiLF7OSgn5PDShNtnQ9eaFETIeZRJ4eoaT3m0Te0qGk55qO+KRQ1rcZ8VNCiptWYjw5a1LQY8zAMw1mi9L8T49ohn7zQ1prWYj7bQltrWhnD2voDIuarLrS15pqjd7E1FbeIL/H3ucp5IG4Rpwpa4AL+KG/+tHIEyFiMogAAAABJRU5ErkJggg==" />
 <title>Promedic — Order Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -465,6 +472,7 @@ body.dark .tr-fill{background:var(--amber)}
         <div class="sync"><span class="dot" id="syncDot"></span><span id="syncTxt">Connecting…</span></div>
         <button class="pill ghost navtoggle" id="navToggle" onclick="toggleNav(event)" aria-label="Menu">☰ Menu</button>
         <div class="hmenu" id="hmenu">
+          <button class="pill ghost" onclick="openInstallHelp()" title="Add this to your phone's home screen"><span class="ico">📲</span> Install</button>
           <button class="pill ghost" onclick="openBuilds()"><span class="ico">🚑</span> Units</button>
           <button class="pill ghost" onclick="openSuppliers()"><span class="ico">🏢</span> Suppliers</button>
           <button class="pill ghost" onclick="setTab('parts');openScan()" title="Scan part labels with your camera"><span class="ico">📷</span> Scan</button>
@@ -1069,6 +1077,41 @@ function setTab(t){ state.tab=t;
   ['orders','parts','packing','billing','trends','rmas'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
 }
 function setFilter(k){ state.filter = state.filter===k?'all':k; render(); }
+
+/* ---- Installable app (Add to Home Screen) ---- */
+(function(){
+  try{
+    var ICON192='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAD10lEQVR42u3dvU4bWxSG4ZktQ0nvjpYiVRoiRUi5BS6UW4iEIoWGKgUtHT0lFKQBxYoC/o09e33PU53THA3j9e41Y4WTcZiYk9Pzl4GyHu9vxildz2jYSY5iNPQkxzAafJJDGA0+ySGMBp/kEEaDT3IIzfDTk13P2GjwSd4GzfCTvA2a4Sc5gmb4SY6gGX6SI2iGn+QImuEnOYJm+EmOoBl+kiNohp/kCJrbRLLm9Cd5CzTDT3IEHoHwCOT0J3UL2ADYAE5/UreADYAN4PQndQvYANgATn9St4ANgA0A0QF4/CH1McgGwAYAAYAAIMvoBRgbAAQAAgABgABAACAAKGtW/Qd8uLve6X9vfnYR9fP28DMLYE+DkOrtXlYMYWbwSQ6hGX6S77OXYKKVCcDp737bAJAYwD5PoymffPu+tgpbwAYo8sF7BBRA7MAZfgHEDp7h387MLTCANgAIAAQAAgABgABAACAAEAAIAAQAAgABgABAACAAEAAIAKbPr0S++v7zV1fX++3LJx+aDZA5/Otc8/PVsQ9YALWGf9Vrfxt+EQgg3vPVsRAEUOtZ+qNrf2/YRSCAEhFsc822wR++BSqwCTY55Y8un3zoNkDNZ30EgNNfAE5/BGDInf4CqDX8/4rAi68Aok7+xX/36LM5X4OGPNc7/QVQbvhXjcPwewTqksEVgAi2jEBEAgDvAMtM+vcC5rfD14fPTn8bIHD4X/2Y3xp+AWQO/6YRIAAvzgjgI739HsDfW+Do8snACyAzgsXBf/tnMazHt0CdRjAMTx59bAAQAAgABAACAAGAAEAAIAAQAAgAFvmzQK/8HWE2gOF3zQIw/K5dACCADFX/jjAEUHqQDP9u+BbIQNkAIAAQAAgABAACAAGAAEAAIAAQAAgABAACAAGAAEAAIAAQAAgABAACAAGAAEAAIAAQAAgABAACAAGAAFYyP7vwSbrvNgDEBmALuN82ACQHYAu4z+saT07PXyp+SA931ybV4OcGIASDLwBY9g7weH8zug0kery/GX0LRPYGcAsQAAgAQgPwIkziC7ANgA3gFiAAj0EEPv7YANgA75UB1U9/GwAbYFkhUPX0twGwAVYtBaqd/jYANsC6xUCV03/pBhABlYffIxAegbYtCHo9/VfeACKg4vCv9QgkAqoN/9rvACKg0vBv9BIsAqoM/0YBiIAqw79xACKgwvBvFYAI6H34tw5ABPQ8/MMwDDsdXv+jXXoZ/J1tANuAXod/5xvANqCXwf/vAQiBHp4q9vbIIgSm+Di992d2ITCl98iDvrSKgUMM/WQCEIVhP7Tfwix+x75hUZ0AAAAASUVORK5CYII=';
+    var ICON512='data:image/png;base64,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';
+    var path=location.pathname;
+    var mani={ name:'Promedic Order Tracker', short_name:'Orders',
+      start_url:path, scope:path, display:'standalone', orientation:'portrait',
+      background_color:'#0E2038', theme_color:'#0E2038',
+      icons:[{src:ICON192,sizes:'192x192',type:'image/png',purpose:'any'},
+             {src:ICON512,sizes:'512x512',type:'image/png',purpose:'any'}] };
+    var blob=new Blob([JSON.stringify(mani)],{type:'application/manifest+json'});
+    var link=document.getElementById('appManifest');
+    if(link) link.href=URL.createObjectURL(blob);
+  }catch(e){}
+})();
+function openInstallHelp(){
+  var ua=navigator.userAgent||'';
+  var isIOS=/iPad|iPhone|iPod/.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  var steps = isIOS
+   ? `<li>Tap the <strong>Share</strong> button (the square with an ↑) at the bottom of Safari.</li>
+      <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+      <li>Tap <strong>Add</strong> — the Order Tracker icon appears on your home screen.</li>`
+   : `<li>Tap the <strong>⋮</strong> menu at the top-right of Chrome.</li>
+      <li>Tap <strong>Add to Home screen</strong> (some phones say <strong>Install app</strong>).</li>
+      <li>Tap <strong>Add</strong> / <strong>Install</strong> — the icon appears on your home screen.</li>`;
+  modal(`<div class="mhead"><h2>Install as an app</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <p class="sub" style="margin-top:0">Put the Order Tracker on your phone's home screen so it opens from an icon like a normal app — full screen, no address bar.</p>
+      <ol style="line-height:1.75;font-size:14px;padding-left:20px;margin:0">${steps}</ol>
+      <p class="sub" style="margin-top:14px">You only do this once per phone. It still updates automatically whenever the page reloads.</p>
+    </div>
+    <div class="mfoot"><button class="btn primary" onclick="closeModal()">Got it</button></div>`);
+}
 
 /* header dropdown menu (phones) */
 function toggleNav(e){ if(e) e.stopPropagation(); const m=el('hmenu'); if(m) m.classList.toggle('show'); }
@@ -1856,6 +1899,7 @@ function renderRecvDetail(){
       <div class="recv-body">
         <button class="recv-bigbtn" onclick="recvReceiveAll()">✓ Mark all items received</button>
         ${itemsHtml}
+        <button class="recv-bigbtn" style="margin-top:6px;border-style:solid;border-color:var(--ok);color:var(--ok)" onclick="recvPushToStock('${o.id}')"><span class="ico">📥</span> Add received to on-hand</button>
         <button class="recv-bigbtn" style="margin-top:6px" onclick="el('recvPhotoInput').click()"><span class="ico">📷</span> Add packing slip photo</button>
         <input id="recvPhotoInput" type="file" accept="image/*" capture="environment" style="display:none" onchange="recvUpload()" />
         <div id="recvSlipLog" class="sub" style="text-align:center">${_recvNote}</div>
@@ -2019,6 +2063,44 @@ function closeScan(){
   if(_scan.stream){ _scan.stream.getTracks().forEach(t=>{ try{t.stop()}catch(e){} }); }
   _scan={stream:null,raf:null,detector:null,video:null,canvas:null,ctx:null,paused:false,lastId:null,lastAt:0};
   el('scanRoot').innerHTML=''; render();
+}
+
+/* ====================== RECEIVING -> ON-HAND INVENTORY ======================
+   Adds received quantities into the parts catalog's on-hand counts.
+   Matches order items to catalog parts by SKU. Idempotent per device:
+   it remembers how much of each line it already added, so tapping again
+   only applies the difference (handles later corrections too). */
+const RECV_APPLIED_KEY='pmc_recv_applied';
+function recvApplied(){ try{ return JSON.parse(localStorage.getItem(RECV_APPLIED_KEY)||'{}'); }catch(e){ return {}; } }
+function recvSaveApplied(m){ try{ localStorage.setItem(RECV_APPLIED_KEY, JSON.stringify(m)); }catch(e){} }
+function partForItem(it){
+  const sku=(it.sku||'').trim().toLowerCase(); if(!sku) return null;
+  return state.parts.find(p=>(p.sku||'').trim().toLowerCase()===sku) || null;
+}
+function recvPushToStock(orderId){
+  const o=state.orders.find(x=>x.id===orderId); if(!o) return;
+  const applied=recvApplied();
+  let parts=0, unmatched=0, net=0;
+  (o.items||[]).forEach(it=>{
+    const recv=Number(it.received_qty)||0;
+    const prev=Number(applied[it.id])||0;
+    const delta=recv-prev;
+    if(delta===0) return;
+    const p=partForItem(it);
+    if(!p){ if(recv>prev) unmatched++; return; }
+    const from=Number(p.on_hand)||0, q=Math.max(0, from+delta), now=new Date().toISOString();
+    p.on_hand=q; p.stock_updated_at=now;
+    reliableWrite('onhand:'+p.id, ()=>sb.from('parts').update({on_hand:q, stock_updated_at:now}).eq('id',p.id));
+    logStock(p.id, from, q, 'Received '+(o.po_number?('PO '+o.po_number):'order'));
+    applied[it.id]=recv; parts++; net+=delta;
+  });
+  recvSaveApplied(applied);
+  renderParts(); if(el('reorderList')) renderReorderList();
+  let msg = parts ? ('✓ On-hand updated for '+parts+' part'+(parts>1?'s':'')) : 'On-hand already matches what\'s received';
+  if(unmatched) msg += ' · '+unmatched+' item'+(unmatched>1?'s':'')+' not in catalog';
+  _recvNote=msg;
+  const log=el('recvSlipLog'); if(log) log.innerHTML='<span style="color:var(--ok)">'+esc(msg)+'</span>';
+  toast(msg);
 }
 
 /* ---------- Attachments (Supabase Storage) ---------- */
