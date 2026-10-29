@@ -343,6 +343,12 @@ body.dark .tr-fill{background:var(--amber)}
 .newmenu.show{display:block}
 .newmenu button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;border:none;color:var(--ink);font-size:14px;font-weight:600;padding:11px 12px;border-radius:8px;cursor:pointer}
 .newmenu button:hover{background:var(--bg)}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.kpi-grid .bcard{padding:14px 16px}
+.kpi-grid .bcard .amt{font-size:24px;margin:4px 0 2px}
+.hometile:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(16,32,55,.10)}
+.cost3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:860px){ .kpi-grid{grid-template-columns:repeat(2,1fr)} .cost3{grid-template-columns:1fr} }
 
 @media(max-width:860px){
   .hwrap{padding:10px 14px;gap:10px}
@@ -493,6 +499,7 @@ body.dark .tr-fill{background:var(--amber)}
           <div class="newmenu" id="newMenu">
             <button onclick="pickNew('po')"><span class="ico">📋</span> Purchase Order</button>
             <button onclick="pickNew('so')"><span class="ico">💼</span> Sales Order</button>
+            <button onclick="pickNew('inv')"><span class="ico">🧾</span> Invoice</button>
             <button onclick="pickNew('cust')"><span class="ico">👤</span> Customer</button>
           </div>
         </div>
@@ -510,8 +517,10 @@ body.dark .tr-fill{background:var(--amber)}
       <div id="globalResults" class="gs-results hide"></div>
     </div>
     <div class="tabs">
-      <button class="tab active" data-tab="orders" onclick="setTab('orders')"><span class="ico">📋</span> Orders</button>
+      <button class="tab active" data-tab="home" onclick="setTab('home')"><span class="ico">🏠</span> Home</button>
+      <button class="tab" data-tab="orders" onclick="setTab('orders')"><span class="ico">📋</span> Orders</button>
       <button class="tab" data-tab="sales" onclick="setTab('sales')"><span class="ico">💼</span> Sales Orders</button>
+      <button class="tab" data-tab="invoices" onclick="setTab('invoices')"><span class="ico">🧾</span> Invoices</button>
       <button class="tab" data-tab="parts" onclick="setTab('parts')"><span class="ico">🔩</span> Parts</button>
       <button class="tab" data-tab="packing" onclick="setTab('packing')"><span class="ico">📦</span> Packing Slips</button>
       <button class="tab" data-tab="billing" onclick="setTab('billing')"><span class="ico">💲</span> Billing</button>
@@ -519,8 +528,13 @@ body.dark .tr-fill{background:var(--amber)}
       <button class="tab" data-tab="rmas" onclick="setTab('rmas')"><span class="ico">↩</span> RMAs</button>
     </div>
 
+    <!-- HOME / DASHBOARD -->
+    <section id="tab-home">
+      <div id="homeBody"></div>
+    </section>
+
     <!-- ORDERS TAB -->
-    <section id="tab-orders">
+    <section id="tab-orders" class="hide">
       <div class="rail" id="rail"></div>
       <div class="toolbar">
         <div class="search">
@@ -567,6 +581,31 @@ body.dark .tr-fill{background:var(--amber)}
         <div class="empty hide" id="soEmpty">
           <h3>No sales orders yet</h3><p>Create a sales order when a customer orders a unit or remount.</p>
           <button class="btn primary" onclick="openSalesOrder()">＋ New Sales Order</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- INVOICES TAB -->
+    <section id="tab-invoices" class="hide">
+      <div class="rail" id="invRail"></div>
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          <input id="invSearch" placeholder="Search invoices — INV#, customer, unit…" oninput="renderInvoices()" />
+        </div>
+        <button class="pill amber" onclick="openInvoice()" style="color:#3a2800">＋ New Invoice</button>
+      </div>
+      <div class="panel">
+        <table>
+          <thead><tr>
+            <th>INV #</th><th>Customer</th><th>Unit / Build</th><th>Total</th><th>Balance</th><th>Status</th><th>Due</th><th>Updated</th>
+          </tr></thead>
+          <tbody id="invBody"></tbody>
+        </table>
+        <div class="cards" id="invCards"></div>
+        <div class="empty hide" id="invEmpty">
+          <h3>No invoices yet</h3><p>Bill a customer by creating an invoice — or make one straight from a sales order.</p>
+          <button class="btn primary" onclick="openInvoice()">＋ New Invoice</button>
         </div>
       </div>
     </section>
@@ -715,7 +754,7 @@ const LOGO_SVG = `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><r
 
 /* ---------- State ---------- */
 let sb = null;
-let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], customers:[], salesOrders:[], tab:'orders', filter:'all', soFilter:'all', rmaFilter:'open', editing:null, editingPart:null, editingSO:null, lineItems:[], soLineItems:[] };
+let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], customers:[], salesOrders:[], invoices:[], tab:'home', filter:'all', soFilter:'all', invFilter:'all', rmaFilter:'open', editing:null, editingPart:null, editingSO:null, editingInv:null, lineItems:[], soLineItems:[], invLineItems:[] };
 
 /* ---------- Helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -828,18 +867,20 @@ async function loadAll(){
   render();                        // board paints now
   // Wave 2 — everything else, loaded in the background
   state.loading2 = true;
-  const [slp,prt,rma,cus,so] = await Promise.all([
+  const [slp,prt,rma,cus,so,inv] = await Promise.all([
     sb.from('packing_slips').select('*, order:orders(po_number)').order('date_received',{ascending:false}),
     sb.from('parts').select('*, supplier:suppliers(name)').order('description'),
     sb.from('rmas').select('*, supplier:suppliers(name), order:orders(po_number)').order('created_at',{ascending:false}),
     sb.from('customers').select('*').order('name'),
     sb.from('sales_orders').select('*, customer:customers(name), build:builds(name), items:sales_order_items(*)').order('updated_at',{ascending:false}),
+    sb.from('invoices').select('*, customer:customers(name), build:builds(name), items:invoice_items(*), payments:payments(*)').order('updated_at',{ascending:false}),
   ]);
   for(const r of [slp,prt]){ if(r.error){ console.error(r.error); } }
   state.slips = slp.data||[]; state.parts = prt.data||[];
   state.rmas = (rma&&!rma.error) ? (rma.data||[]) : [];   // table may not exist until the RMA add-on is run
   state.customers = (cus&&!cus.error) ? (cus.data||[]) : [];       // sales add-on may not be run yet
   state.salesOrders = (so&&!so.error) ? (so.data||[]) : [];
+  state.invoices = (inv&&!inv.error) ? (inv.data||[]) : [];       // invoices add-on may not be run yet
   state.loading2 = false;
   render();                        // fills parts / slips / trends / RMAs
   el('syncDot').classList.add('on'); el('syncTxt').textContent='Synced';
@@ -905,7 +946,7 @@ function render(){
         </div></div>`;
     }).join('');
   }
-  renderSlips(); renderBilling(); renderParts(); renderTrends(); renderRMAs(); renderSales();
+  renderSlips(); renderBilling(); renderParts(); renderTrends(); renderRMAs(); renderSales(); renderInvoices(); renderHome();
 }
 
 /* ---------- Render: packing slips ---------- */
@@ -1136,7 +1177,7 @@ function handleDeepLink(){
 
 function setTab(t){ state.tab=t;
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
-  ['orders','sales','parts','packing','billing','trends','rmas'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
+  ['home','orders','sales','invoices','parts','packing','billing','trends','rmas'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
 }
 function setFilter(k){ state.filter = state.filter===k?'all':k; render(); }
 
@@ -2409,7 +2450,8 @@ function renderBuildList(){
     const cnt=state.orders.filter(o=>o.build_id===b.id).length;
     return `<div class="att"><span><strong>${esc(b.name)}</strong>${b.line?' <span class="linep">'+esc(b.line)+'</span>':''}${b.customer?' · '+esc(b.customer):''}
       <span class="sub">(${cnt} order${cnt===1?'':'s'})</span></span>
-      <span style="display:flex;gap:6px"><button class="linkbtn" title="QR label" onclick="qrForUnit('${b.id}')">▦</button>
+      <span style="display:flex;gap:6px"><button class="linkbtn" title="Job costing — cost vs. billed" onclick="openUnitCosting('${b.id}')">💰</button>
+      <button class="linkbtn" title="QR label" onclick="qrForUnit('${b.id}')">▦</button>
       <button class="adel" onclick="delBuild('${b.id}')">✕</button></span></div>`;
   }).join('') : '<div class="sub">None yet.</div>';
 }
@@ -2997,7 +3039,7 @@ function buildQuote(id, opts){
 /* ---- "+ New" header dropdown ---- */
 function toggleNewMenu(e){ if(e) e.stopPropagation(); const m=el('newMenu'); if(m) m.classList.toggle('show'); }
 function pickNew(kind){ const m=el('newMenu'); if(m) m.classList.remove('show');
-  if(kind==='po') openOrder(); else if(kind==='so') openSalesOrder(); else if(kind==='cust') openCustomers(); }
+  if(kind==='po') openOrder(); else if(kind==='so') openSalesOrder(); else if(kind==='inv') openInvoice(); else if(kind==='cust') openCustomers(); }
 document.addEventListener('click',function(e){
   const m=el('newMenu'); if(!m||!m.classList.contains('show')) return;
   if(e.target.closest('#newBtn')) return;
@@ -3198,7 +3240,10 @@ function viewSalesOrder(id){
       ${o.notes?`<div class="section-lb">Notes</div><div class="sub" style="white-space:pre-wrap">${esc(o.notes)}</div>`:''}
     </div>
     <div class="mfoot">
-      <button class="btn sub" onclick="downloadSalesOrder('${o.id}')">⬇ PDF</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="downloadSalesOrder('${o.id}')">⬇ PDF</button>
+        <button class="btn ok" onclick="invoiceFromSO('${o.id}')">🧾 Create Invoice</button>
+      </div>
       <div style="display:flex;gap:8px">
         <button class="btn sub" onclick="openSalesOrder((state.salesOrders||[]).find(x=>x.id==='${o.id}'))">Edit</button>
         <button class="btn primary" onclick="closeModal()">Done</button>
@@ -3380,6 +3425,469 @@ async function delCustomer(id){
 /* ---- global search hooks ---- */
 function gsOpenSO(id){ closeGlobalResults(); setTab('sales'); viewSalesOrder(id); }
 function gsOpenCustomer(id){ closeGlobalResults(); openCustomers(); editCustomer(id); }
+
+/* ====================== INVOICES & PAYMENTS (Phase 2) ====================== */
+const INV_STAGES = [
+  {key:'draft',   label:'Draft',   sub:'Not sent',     varc:'--s-needed'},
+  {key:'sent',    label:'Sent',    sub:'Awaiting pay',  varc:'--s-submitted'},
+  {key:'partial', label:'Partial', sub:'Part paid',     varc:'--s-awaiting'},
+  {key:'overdue', label:'Overdue', sub:'Past due',      varc:'--s-cancelled'},
+  {key:'paid',    label:'Paid',    sub:'Settled',       varc:'--s-received'},
+];
+let _invSeedSO=null;   // set when creating an invoice from a sales order
+
+function invItemsSubtotal(inv){ return (inv.items||[]).reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.unit_price)||0),0); }
+function invTotal(inv){ return (inv.total!=null&&inv.total!=='')?Number(inv.total):invItemsSubtotal(inv)+(Number(inv.tax)||0)+(Number(inv.shipping)||0); }
+function invPaid(inv){ return (inv.payments||[]).reduce((a,p)=>a+(Number(p.amount)||0),0); }
+function invBalance(inv){ return invTotal(inv)-invPaid(inv); }
+function invStatus(inv){
+  if(inv.status==='void')  return {key:'void', label:'Void',  varc:'--s-cancelled'};
+  if(inv.status==='draft') return {key:'draft',label:'Draft', varc:'--s-needed'};
+  const bal=invBalance(inv), paid=invPaid(inv), tot=invTotal(inv);
+  if(tot>0 && bal<=0.004)                 return {key:'paid',   label:'Paid',    varc:'--s-received'};
+  if(paid>0)                              return {key:'partial',label:'Partial', varc:'--s-awaiting'};
+  if(inv.due_date && inv.due_date<today())return {key:'overdue',label:'Overdue', varc:'--s-cancelled'};
+  return {key:'sent', label:'Sent', varc:'--s-submitted'};
+}
+function arOutstanding(){ return (state.invoices||[]).filter(i=>{const k=invStatus(i).key; return k!=='void'&&k!=='draft'&&k!=='paid';}).reduce((a,i)=>a+invBalance(i),0); }
+function arOverdue(){ return (state.invoices||[]).filter(i=>invStatus(i).key==='overdue').reduce((a,i)=>a+invBalance(i),0); }
+function invNextNumber(){ let max=0; (state.invoices||[]).forEach(v=>{ const m=/INV-?(\d+)/i.exec(v.invoice_number||''); if(m) max=Math.max(max,parseInt(m[1],10)); }); return 'INV-'+String(max+1).padStart(4,'0'); }
+
+function filteredInvoices(){
+  const q=(el('invSearch')?.value||'').toLowerCase().trim();
+  return (state.invoices||[]).filter(v=>{
+    if(state.invFilter!=='all' && invStatus(v).key!==state.invFilter) return false;
+    if(!q) return true;
+    const hay=[v.invoice_number,v.customer?.name,v.build?.name,v.notes,...(v.items||[]).flatMap(i=>[i.sku,i.description])].join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+}
+function setInvFilter(k){ state.invFilter=state.invFilter===k?'all':k; renderInvoices(); }
+
+function renderInvoices(){
+  const rail=el('invRail'); if(!rail) return;
+  rail.innerHTML = INV_STAGES.map(st=>{
+    const c=(state.invoices||[]).filter(v=>invStatus(v).key===st.key).length;
+    const sel=state.invFilter===st.key?' sel':'';
+    return `<button class="stage${sel}" style="--sc:var(${st.varc})" onclick="setInvFilter('${st.key}')">
+      <span class="dotc"></span><div class="n">${c}</div><div class="lb">${st.label}</div><div class="sb">${st.sub}</div></button>`;
+  }).join('');
+  const body=el('invBody'), cards=el('invCards');
+  if(state.loading2 && !(state.invoices||[]).length){
+    el('invEmpty').classList.add('hide');
+    body.innerHTML='<tr><td colspan="8" class="sub" style="text-align:center;padding:30px">Loading invoices…</td></tr>';
+    cards.innerHTML='<div class="sub" style="text-align:center;padding:30px">Loading…</div>'; return;
+  }
+  el('invEmpty').classList.toggle('hide', (state.invoices||[]).length>0);
+  const list=filteredInvoices();
+  if(!list.length){ body.innerHTML=''; cards.innerHTML=''; return; }
+  body.innerHTML=list.map(v=>{ const st=invStatus(v), bal=invBalance(v);
+    return `<tr onclick="viewInvoice('${v.id}')">
+      <td class="po mono">${esc(v.invoice_number||'—')}</td>
+      <td>${esc(v.customer?.name||'—')}</td>
+      <td>${v.build?.name?esc(v.build.name):'<span class=sub>—</span>'}</td>
+      <td class="mono">${money0(invTotal(v))}</td>
+      <td class="mono">${bal>0.004?money0(bal):'<span class=sub>—</span>'}</td>
+      <td><span class="badge" style="--sc:var(${st.varc})">${st.label}</span></td>
+      <td>${v.due_date?fmtDate(v.due_date):'—'}</td>
+      <td class="sub">${timeAgo(v.updated_at)}</td></tr>`;
+  }).join('');
+  cards.innerHTML=list.map(v=>{ const st=invStatus(v), bal=invBalance(v);
+    return `<div class="ocard" onclick="viewInvoice('${v.id}')">
+      <div class="top"><div><div class="po mono">${esc(v.invoice_number||'No #')}</div>
+        <div class="sub">${esc(v.customer?.name||'—')}${v.build?.name?' · '+esc(v.build.name):''}</div></div>
+        <span class="badge" style="--sc:var(${st.varc})">${st.label}</span></div>
+      <div class="meta"><span>Total <strong class="mono">${money0(invTotal(v))}</strong></span>
+        <span>Balance <strong class="mono">${bal>0.004?money0(bal):'$0'}</strong></span>
+        <span>${v.due_date?'Due '+fmtDate(v.due_date):'No due date'}</span></div></div>`;
+  }).join('');
+}
+
+/* ---- Invoice editor ---- */
+const INV_TERMS=['Due on receipt','Net 15','Net 30','Net 45','Net 60'];
+function openInvoice(inv=null, seed=null){
+  state.editingInv=inv;
+  const src=inv||seed;
+  _invSeedSO = (!inv && seed) ? (seed.sales_order_id||null) : (inv?inv.sales_order_id:null);
+  state.invLineItems = src ? (src.items||[]).map(i=>({sku:i.sku||'',description:i.description||'',qty:i.qty||1,unit_price:i.unit_price||0}))
+                           : [{sku:'',description:'',qty:1,unit_price:0}];
+  const selCust = inv?inv.customer_id:(seed?seed.customer_id:'');
+  const selBld  = inv?inv.build_id:(seed?seed.build_id:'');
+  const custOpts=(state.customers||[]).map(c=>`<option value="${c.id}" ${selCust===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+  const bldOpts=state.builds.map(b=>`<option value="${b.id}" ${selBld===b.id?'selected':''}>${esc(b.name)}</option>`).join('');
+  const baseStatus=inv?inv.status:'draft';
+  const stOpts=[['draft','Draft'],['sent','Sent'],['void','Void']].map(x=>`<option value="${x[0]}" ${baseStatus===x[0]?'selected':''}>${x[1]}</option>`).join('');
+  const termOpts=INV_TERMS.map(t=>`<option ${inv&&inv.terms===t?'selected':(!inv&&t==='Net 30'?'selected':'')}>${t}</option>`).join('');
+  modal(`
+    <div class="mhead"><h2>${inv?'Edit Invoice':'New Invoice'}</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="grid2">
+        <div class="field"><label>Customer <span class="req">*</span> <button class="linkbtn" style="float:right;font-size:11px" onclick="openCustomers()">＋ New customer</button></label>
+          <select id="invCustomer"><option value="">— Select —</option>${custOpts}</select></div>
+        <div class="field"><label>Unit / Build</label><select id="invBuild"><option value="">— None —</option>${bldOpts}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Status</label><select id="invStatusSel">${stOpts}</select></div>
+        <div class="field"><label>Invoice #</label><input id="invNumber" value="${esc(inv?.invoice_number||'')}" placeholder="${invNextNumber()}"/></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Invoice Date</label><input id="invDate" type="date" value="${inv?.invoice_date||today()}" onchange="invApplyTerms()"/></div>
+        <div class="field"><label>Terms</label><select id="invTerms" onchange="invApplyTerms()">${termOpts}</select></div>
+      </div>
+      <div class="field"><label>Due Date</label><input id="invDue" type="date" value="${inv?.due_date||''}"/></div>
+
+      <div class="section-lb">Items <span><button class="linkbtn" onclick="invAddLine()">＋ Blank Row</button></span></div>
+      <div class="li-head"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Total</span><span></span></div>
+      <div id="invLineItems"></div>
+
+      <div class="grid2" style="margin-top:12px">
+        <div class="field"><label>Tax ($)</label><input id="invTax" type="number" step="0.01" value="${inv?.tax||''}" oninput="updateInvTotal()"/></div>
+        <div class="field"><label>Shipping ($)</label><input id="invShip" type="number" step="0.01" value="${inv?.shipping||''}" oninput="updateInvTotal()"/></div>
+      </div>
+      <div class="li-total">Subtotal: <strong class="mono" id="invSubTotal">$0.00</strong> &nbsp;·&nbsp; Total: <strong class="mono" id="invGrand">$0.00</strong></div>
+
+      <div class="field" style="margin-top:12px"><label>Notes</label><textarea id="invNotes">${esc(inv?.notes||'')}</textarea></div>
+    </div>
+    <div class="mfoot">
+      <div>${inv?`<button class="btn warn" onclick="deleteInvoice('${inv.id}')">Delete</button>`:''}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" onclick="saveInvoice()">${inv?'Save changes':'Create invoice'}</button>
+      </div>
+    </div>`);
+  renderInvLines();
+  if(!inv) invApplyTerms();
+  if(!inv) setTimeout(()=>el('invCustomer')?.focus(),60);
+}
+function invApplyTerms(){
+  const terms=el('invTerms')?.value, base=el('invDate')?.value; if(!terms||!base) return;
+  const days={'Due on receipt':0,'Net 15':15,'Net 30':30,'Net 45':45,'Net 60':60}[terms];
+  if(days==null) return;
+  const d=new Date(base+'T00:00:00'); d.setDate(d.getDate()+days);
+  if(el('invDue')) el('invDue').value=d.toISOString().slice(0,10);
+}
+function renderInvLines(){
+  el('invLineItems').innerHTML = state.invLineItems.map((it,i)=>`<div class="li">
+    <input value="${esc(it.sku||'')}" placeholder="SKU" oninput="invSetLine(${i},'sku',this.value)" onkeydown="invLineKey(event,${i})"/>
+    <input value="${esc(it.description||'')}" placeholder="Description" oninput="invSetLine(${i},'description',this.value)" onkeydown="invLineKey(event,${i})"/>
+    <input class="mono" type="number" min="0" title="Qty" placeholder="Qty" value="${it.qty??1}" oninput="invSetLine(${i},'qty',this.value)" onkeydown="invLineKey(event,${i})"/>
+    <input class="mono" type="number" min="0" step="0.01" title="Unit price" placeholder="Unit $" value="${it.unit_price??0}" oninput="invSetLine(${i},'unit_price',this.value)" onkeydown="invLineKey(event,${i})"/>
+    <span class="mono soLineTot" style="align-self:center;text-align:right;font-size:13px">${money((Number(it.qty)||0)*(Number(it.unit_price)||0))}</span>
+    <button class="lidel" onclick="invDelLine(${i})">✕</button></div>`).join('');
+  updateInvTotal();
+}
+function invFocusRow(i){ const rows=el('invLineItems').querySelectorAll('.li'); rows[i]?.querySelector('input')?.focus(); }
+function invAddLine(){ state.invLineItems.push({sku:'',description:'',qty:1,unit_price:0}); renderInvLines(); invFocusRow(state.invLineItems.length-1); }
+function invDelLine(i){ state.invLineItems.splice(i,1); if(!state.invLineItems.length) invAddLine(); else renderInvLines(); }
+function invSetLine(i,k,v){ state.invLineItems[i][k]=(k==='sku'||k==='description')?v:parseFloat(v||0); if(k==='qty'||k==='unit_price') updateInvTotal(); }
+function invLineKey(e,i){ if(e.key!=='Enter')return; e.preventDefault(); if(i>=state.invLineItems.length-1) invAddLine(); else invFocusRow(i+1); }
+function invEditTotal(){ return state.invLineItems.reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.unit_price)||0),0); }
+function updateInvTotal(){
+  document.querySelectorAll('#invLineItems .li').forEach((row,idx)=>{ const it=state.invLineItems[idx]; if(!it)return;
+    const span=row.querySelector('.soLineTot'); if(span) span.textContent=money((Number(it.qty)||0)*(Number(it.unit_price)||0)); });
+  const sub=invEditTotal(), tax=Number(el('invTax')?.value)||0, ship=Number(el('invShip')?.value)||0;
+  if(el('invSubTotal')) el('invSubTotal').textContent=money(sub);
+  if(el('invGrand')) el('invGrand').textContent=money(sub+tax+ship);
+}
+function saveInvoice(){
+  const customer_id=el('invCustomer').value;
+  if(!customer_id){ toast('Pick a customer first'); return; }
+  let no=el('invNumber').value.trim(); if(!no) no=invNextNumber();
+  const sub=invEditTotal(), tax=el('invTax').value?parseFloat(el('invTax').value):0, ship=el('invShip').value?parseFloat(el('invShip').value):0;
+  const rec={ customer_id, build_id:el('invBuild').value||null, sales_order_id:_invSeedSO||null,
+    status:el('invStatusSel').value, invoice_number:no, invoice_date:el('invDate').value||null, due_date:el('invDue').value||null,
+    terms:el('invTerms').value||null, tax:tax||null, shipping:ship||null, total:(sub+tax+ship)||null,
+    notes:el('invNotes').value.trim()||null, updated_at:new Date().toISOString() };
+  (async()=>{
+    let invId=state.editingInv?.id;
+    if(invId){
+      const {error}=await sb.from('invoices').update(rec).eq('id',invId);
+      if(error){ toast(saleErr(error)); return; }
+      await sb.from('invoice_items').delete().eq('invoice_id',invId);
+    } else {
+      const {data,error}=await sb.from('invoices').insert(rec).select('id').single();
+      if(error){ toast(saleErr(error)); return; }
+      invId=data.id;
+    }
+    const items=state.invLineItems.filter(i=>i.sku||i.description||i.qty)
+      .map(i=>({invoice_id:invId,sku:i.sku||null,description:i.description||null,qty:Number(i.qty)||0,unit_price:Number(i.unit_price)||0}));
+    if(items.length){ const {error}=await sb.from('invoice_items').insert(items); if(error) toast('Items error: '+error.message); }
+    if(rec.sales_order_id){ await sb.from('sales_orders').update({status:'invoiced',updated_at:new Date().toISOString()}).eq('id',rec.sales_order_id); }
+    _invSeedSO=null;
+    closeModal(); toast(state.editingInv?'Invoice updated':'Invoice created'); await loadAll();
+  })();
+}
+function invoiceFromSO(soId){
+  const so=(state.salesOrders||[]).find(x=>x.id===soId); if(!so){ toast('Sales order not found'); return; }
+  closeModal();
+  openInvoice(null, { customer_id:so.customer_id, build_id:so.build_id, sales_order_id:so.id,
+    items:(so.items||[]).map(i=>({sku:i.sku,description:i.description,qty:i.qty,unit_price:i.unit_price})),
+    tax:so.tax, shipping:so.shipping });
+  toast('Invoice drafted from sales order — set dates and save');
+}
+function viewInvoice(id){
+  const v=(state.invoices||[]).find(x=>x.id===id); if(!v) return;
+  const st=invStatus(v), tot=invTotal(v), paid=invPaid(v), bal=invBalance(v);
+  const cust=(state.customers||[]).find(c=>c.id===v.customer_id);
+  const itemsHtml=(v.items||[]).length?`
+    <div class="li-head" style="margin-top:6px"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Total</span><span></span></div>
+    ${v.items.map(i=>`<div class="recv-row">
+      <span class="mono">${esc(i.sku||'—')}</span><span>${esc(i.description||'—')}</span>
+      <span class="mono">${i.qty}</span><span class="mono">${money(i.unit_price)}</span>
+      <span class="mono">${money((Number(i.qty)||0)*(Number(i.unit_price)||0))}</span><span></span></div>`).join('')}`
+    : '<div class="sub">No items on this invoice.</div>';
+  const payHtml=(v.payments||[]).length? (v.payments||[]).slice().sort((a,b)=>(b.paid_date||'').localeCompare(a.paid_date||'')).map(p=>`
+      <div class="att"><span>${p.paid_date?fmtDate(p.paid_date):'—'}${p.method?' · '+esc(p.method):''}${p.reference?' · '+esc(p.reference):''}</span>
+        <span class="mono">${money(p.amount)}</span></div>`).join('') : '<div class="sub">No payments recorded.</div>';
+  modal(`
+    <div class="mhead"><h2>${esc(v.invoice_number||'Invoice')} <span class="badge" style="--sc:var(${st.varc});vertical-align:middle;margin-left:8px">${st.label}</span></h2>
+      <button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="drow"><span class="k">Customer</span><span><strong>${esc(cust?.name||v.customer?.name||'—')}</strong></span></div>
+      ${v.build?.name?`<div class="drow"><span class="k">Unit / Build</span><span>${esc(v.build.name)}</span></div>`:''}
+      <div class="drow"><span class="k">Invoice date</span><span>${v.invoice_date?fmtDate(v.invoice_date):'—'}</span></div>
+      <div class="drow"><span class="k">Due date</span><span>${v.due_date?fmtDate(v.due_date):'—'}${v.terms?' <span class="sub">· '+esc(v.terms)+'</span>':''}</span></div>
+      <div class="section-lb">Items</div>
+      ${itemsHtml}
+      <div class="li-total">Total <strong class="mono">${money(tot)}</strong> &nbsp;·&nbsp; Paid <strong class="mono">${money(paid)}</strong> &nbsp;·&nbsp; <span style="color:${bal>0.004?'var(--danger)':'var(--ok)'}">Balance <strong class="mono">${money(bal)}</strong></span></div>
+      <div class="section-lb">Payments <span><button class="linkbtn" onclick="openPaymentForm('${v.id}')">＋ Record payment</button></span></div>
+      ${payHtml}
+    </div>
+    <div class="mfoot">
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="downloadInvoice('${v.id}')">⬇ PDF</button>
+        ${bal>0.004?`<button class="btn ok" onclick="openPaymentForm('${v.id}')">＋ Payment</button>`:''}
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="openInvoice((state.invoices||[]).find(x=>x.id==='${v.id}'))">Edit</button>
+        <button class="btn primary" onclick="closeModal()">Done</button>
+      </div>
+    </div>`);
+}
+function openPaymentForm(invId){
+  const v=(state.invoices||[]).find(x=>x.id===invId); if(!v) return;
+  const bal=invBalance(v);
+  const methods=['Check','ACH','Card','Cash','Other'];
+  modal(`
+    <div class="mhead"><h2>Record Payment</h2><button class="x" onclick="viewInvoice('${invId}')">✕</button></div>
+    <div class="mbody">
+      <div class="drow"><span class="k">Invoice</span><span><strong>${esc(v.invoice_number||'—')}</strong> · balance <span class="mono">${money(bal)}</span></span></div>
+      <div class="grid2">
+        <div class="field"><label>Amount ($) <span class="req">*</span></label><input id="payAmt" type="number" step="0.01" value="${bal>0?bal.toFixed(2):''}"/></div>
+        <div class="field"><label>Date</label><input id="payDate" type="date" value="${today()}"/></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Method</label><select id="payMethod">${methods.map(m=>`<option>${m}</option>`).join('')}</select></div>
+        <div class="field"><label>Reference</label><input id="payRef" placeholder="check #, confirmation…"/></div>
+      </div>
+      <div class="field"><label>Notes</label><input id="payNotes"/></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn sub" onclick="viewInvoice('${invId}')">Back</button>
+      <button class="btn primary" onclick="savePayment('${invId}')">Record payment</button>
+    </div>`);
+}
+async function savePayment(invId){
+  const amt=parseFloat(el('payAmt').value); if(!amt||amt<=0){ toast('Enter an amount'); return; }
+  const rec={ invoice_id:invId, amount:amt, paid_date:el('payDate').value||today(),
+    method:el('payMethod').value||null, reference:el('payRef').value.trim()||null, notes:el('payNotes').value.trim()||null };
+  const {error}=await sb.from('payments').insert(rec);
+  if(error){ toast(saleErr(error)); return; }
+  const {data}=await sb.from('invoices').select('*, customer:customers(name), build:builds(name), items:invoice_items(*), payments:payments(*)').order('updated_at',{ascending:false});
+  state.invoices=data||[]; render(); toast('Payment recorded'); viewInvoice(invId);
+}
+async function deleteInvoice(id){
+  if(!confirm('Delete this invoice, its items and payments?\n(You can Undo for a few seconds after.)')) return;
+  const {data:iv}=await sb.from('invoices').select('*').eq('id',id).maybeSingle();
+  const {data:items}=await sb.from('invoice_items').select('*').eq('invoice_id',id);
+  const {data:pays}=await sb.from('payments').select('*').eq('invoice_id',id);
+  const {error}=await sb.from('invoices').delete().eq('id',id);
+  if(error){ toast('Delete failed: '+error.message); return; }
+  closeModal(); await loadAll();
+  undoToast('Invoice deleted', async ()=>{
+    if(iv) await sb.from('invoices').insert(iv);
+    if(items&&items.length) await sb.from('invoice_items').insert(items);
+    if(pays&&pays.length) await sb.from('payments').insert(pays);
+    await loadAll();
+  });
+}
+
+/* ---- Invoice PDF ---- */
+function downloadInvoice(id){ const r=buildInvoicePdf(id); if(!r){ toast('Could not build PDF'); return; } r.doc.save(r.filename); toast('Invoice PDF downloaded'); }
+function buildInvoicePdf(id){
+  const v=(state.invoices||[]).find(x=>x.id===id); if(!v) return null;
+  const cust=(state.customers||[]).find(c=>c.id===v.customer_id);
+  const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'letter'});
+  const blue=[31,111,178], red=[193,32,43], navy=[35,80,127], dark=[22,24,29], ink=[45,55,72], muted=[120,132,150], line=[228,231,236];
+  const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=48, RX=PW-M;
+  let mastheadBottom=88;
+  try{ const [ow,oh]=brandLogoWH(); let lw=210,lh=lw*(oh/ow); if(lh>72){lh=72;lw=lh*(ow/oh);}
+    const data=brandLogo(); const fmt=/^data:image\/png/i.test(data)?'PNG':'JPEG';
+    doc.addImage(data,fmt,M,40,lw,lh); mastheadBottom=40+lh; }catch(e){}
+  doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(...navy); doc.text('INVOICE', M, mastheadBottom+24);
+  let y=mastheadBottom+24, my=44;
+  const metaLine=(label,val)=>{ doc.setFontSize(9); doc.setTextColor(...muted); doc.setFont('helvetica','normal');
+    doc.text(label.toUpperCase(), RX-190, my); doc.setTextColor(...navy); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text(String(val||'—'), RX, my, {align:'right'}); my+=17; };
+  metaLine('Invoice #', v.invoice_number||'—');
+  metaLine('Date', v.invoice_date?fmtDate(v.invoice_date):fmtDate(today()));
+  if(v.due_date) metaLine('Due', fmtDate(v.due_date));
+  if(v.terms) metaLine('Terms', v.terms);
+  if(v.build?.name) metaLine('Unit / Build', v.build.name);
+  y+=14; doc.setDrawColor(...line); doc.setLineWidth(1); doc.line(M,y,RX,y);
+  y+=22; const blockTop=y;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...ink); doc.text('BILL TO', M, y);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...navy); doc.text(cust?.name||v.customer?.name||'Customer', M, y+17);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...muted); let cy=y+32;
+  if(cust?.billing_address){ doc.splitTextToSize(String(cust.billing_address),(PW-M*2)*0.5).forEach(ln=>{ doc.text(ln,M,cy); cy+=13; }); }
+  const SX=M+(PW-M*2)*0.55;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...ink); doc.text('FROM', SX, blockTop);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...navy); doc.text(brandName(), SX, blockTop+17);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...muted); let ty=blockTop+32;
+  doc.splitTextToSize(brandShipTo(), PW-M-SX).forEach(ln=>{ doc.text(ln, SX, ty); ty+=13; });
+  y=Math.max(cy,ty,blockTop+44)+8;
+  let subtotal=0;
+  const rows=(v.items||[]).map(i=>{ const lt=(Number(i.qty)||0)*(Number(i.unit_price)||0); subtotal+=lt;
+    return [i.description||i.sku||'Item', String(i.qty||0), money(i.unit_price), money(lt)]; });
+  doc.autoTable({ startY:y, head:[['Description','Qty','Unit Price','Total']], body:rows.length?rows:[['No items','','','']],
+    theme:'grid', headStyles:{ fillColor:[14,32,56], textColor:255, fontStyle:'bold', fontSize:9 },
+    bodyStyles:{ fontSize:9, textColor:[30,40,60] },
+    columnStyles:{ 1:{halign:'center',cellWidth:46}, 2:{halign:'right',cellWidth:78}, 3:{halign:'right',cellWidth:82} },
+    margin:{ left:M, right:M } });
+  let ey=doc.lastAutoTable.finalY+14;
+  const tax=Number(v.tax)||0, ship=Number(v.shipping)||0, paid=invPaid(v);
+  const totLine=(label,val,bold)=>{ doc.setFont('helvetica',bold?'bold':'normal'); doc.setFontSize(bold?11:9.5);
+    doc.setTextColor(...(bold?navy:muted)); doc.text(label, RX-150, ey); doc.setTextColor(...(bold?navy:ink));
+    doc.text(money(val), RX, ey, {align:'right'}); ey+=15; };
+  totLine('Subtotal', subtotal); if(tax) totLine('Tax', tax); if(ship) totLine('Shipping', ship);
+  const grand=subtotal+tax+ship; if(paid) totLine('Paid', -paid);
+  const bal=grand-paid;
+  ey+=4; const barW=240, barH=32, barX=RX-barW;
+  doc.setFillColor(...dark); doc.roundedRect(barX, ey, barW, barH, 5,5,'F');
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(210,214,222); doc.text(paid?'BALANCE DUE':'AMOUNT DUE', barX+14, ey+20);
+  doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(255,255,255); doc.text(money(bal), barX+barW-14, ey+21, {align:'right'});
+  ey+=barH;
+  if(v.notes){ ey+=22; doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...muted);
+    doc.splitTextToSize(String(v.notes), PW-M*2).forEach(ln=>{ doc.text(ln,M,ey); ey+=12; }); }
+  const fy=PH-40; doc.setDrawColor(...line); doc.setLineWidth(1); doc.line(M,fy-14,RX,fy-14);
+  doc.setFillColor(...blue); doc.rect(M,fy-4,20,4,'F'); doc.setFillColor(...red); doc.rect(M+20,fy-4,20,4,'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...muted);
+  doc.text('Powered by Piercy Software', RX, fy-1, {align:'right'});
+  return { doc, v, filename:`Invoice_${(v.invoice_number||v.id.slice(0,6)).replace(/[^\w.\-]/g,'_')}.pdf` };
+}
+
+/* ====================== HOME / DASHBOARD (Role Center) ====================== */
+function openPoList(){ setTab('orders'); }
+function renderHome(){
+  const box=el('homeBody'); if(!box) return;
+  const openPOs=(state.orders||[]).filter(o=>!['received','cancelled'].includes(o.status));
+  const openPOval=openPOs.reduce((a,o)=>a+orderTotals(o).est,0);
+  const toReceive=(state.orders||[]).filter(o=>['submitted','shipped'].includes(o.status));
+  const openSO=(state.salesOrders||[]).filter(o=>!['delivered','invoiced','cancelled'].includes(o.status));
+  const openSOval=openSO.reduce((a,o)=>a+soTotals(o).grand,0);
+  const inProd=(state.salesOrders||[]).filter(o=>o.status==='production');
+  const outstanding=arOutstanding(), overdue=arOverdue();
+  const overdueInv=(state.invoices||[]).filter(i=>invStatus(i).key==='overdue');
+  const low=lowStockParts();
+  const thisMonth=today().slice(0,7);
+  const collected=(state.invoices||[]).flatMap(i=>i.payments||[]).filter(p=>(p.paid_date||'').slice(0,7)===thisMonth).reduce((a,p)=>a+(Number(p.amount)||0),0);
+
+  const tile=(lb,amt,sb,tab)=>`<button class="bcard hometile" ${tab?`onclick="setTab('${tab}')"`:''} style="text-align:left;border:1px solid var(--line);cursor:${tab?'pointer':'default'}">
+      <div class="lb">${lb}</div><div class="amt">${amt}</div><div class="sb">${sb}</div></button>`;
+
+  const attn=(title,items)=> items.length? `<div class="panel" style="padding:12px;margin-bottom:14px">
+      <div class="section-lb" style="margin:0 0 8px;padding-top:0;border-top:none">${title} <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">${items.length}</span></div>
+      ${items.join('')}</div>` : '';
+
+  const overdueRows=overdueInv.slice(0,6).map(i=>`<div class="att" style="cursor:pointer" onclick="viewInvoice('${i.id}')">
+      <span><strong>${esc(i.invoice_number||'—')}</strong> · ${esc(i.customer?.name||'')}</span>
+      <span class="mono" style="color:var(--danger)">${money0(invBalance(i))}</span></div>`);
+  const receiveRows=toReceive.slice(0,6).map(o=>`<div class="att" style="cursor:pointer" onclick="viewOrder('${o.id}')">
+      <span><strong class="mono">${esc(o.po_number||'—')}</strong> · ${esc(o.supplier?.name||'')}</span>
+      <span class="sub">${STATUS_MAP[o.status]?.label||o.status}</span></div>`);
+  const prodRows=inProd.slice(0,6).map(o=>`<div class="att" style="cursor:pointer" onclick="viewSalesOrder('${o.id}')">
+      <span><strong>${esc(o.so_number||'—')}</strong> · ${esc(o.customer?.name||'')}${o.build?.name?' · '+esc(o.build.name):''}</span>
+      <span class="sub">${o.delivery_date?'Due '+fmtDate(o.delivery_date):''}</span></div>`);
+  const lowRows=low.slice(0,6).map(p=>`<div class="att" style="cursor:pointer" onclick="setTab('parts')">
+      <span><strong>${esc(p.description||p.sku||'Part')}</strong></span>
+      <span class="mono" style="color:var(--danger)">${Number(p.on_hand)||0} on hand</span></div>`);
+
+  // job costing mini-table (top units by activity)
+  const units=(state.builds||[]).map(b=>({b,c:unitCosting(b.id)}))
+     .filter(x=>x.c.poCost>0||x.c.invoiced>0||x.c.soRevenue>0)
+     .sort((a,b)=>(b.c.invoiced+b.c.poCost)-(a.c.invoiced+a.c.poCost)).slice(0,6);
+  const jobRows=units.map(x=>`<div class="att" style="cursor:pointer" onclick="openUnitCosting('${x.b.id}')">
+      <span><strong>${esc(x.b.name)}</strong>${x.b.line?' <span class="linep">'+esc(x.b.line)+'</span>':''}</span>
+      <span class="mono">${money0(x.c.invoiced)} <span class="sub">billed</span> · <span style="color:${x.c.profit>=0?'var(--ok)':'var(--danger)'}">${money0(x.c.profit)}</span></span></div>`).join('');
+
+  box.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      <h2 class="sig" style="font-size:20px;margin:0">Dashboard</h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="pill ghost" style="color:var(--ink)" onclick="openOrder()"><span class="ico">📋</span> New PO</button>
+        <button class="pill ghost" style="color:var(--ink)" onclick="openSalesOrder()"><span class="ico">💼</span> New Sales Order</button>
+        <button class="pill ghost" style="color:var(--ink)" onclick="openInvoice()"><span class="ico">🧾</span> New Invoice</button>
+        <button class="pill ghost" style="color:var(--ink)" onclick="openReceive()"><span class="ico">📦</span> Receive</button>
+        <button class="pill ghost" style="color:var(--ink)" onclick="setTab('parts');openScan()"><span class="ico">📷</span> Scan</button>
+      </div>
+    </div>
+    <div class="kpi-grid">
+      ${tile('A/R Outstanding', money0(outstanding), 'Owed to you', 'invoices')}
+      ${tile('Overdue', money0(overdue), overdueInv.length+' invoice'+(overdueInv.length===1?'':'s'), 'invoices')}
+      ${tile('Collected this month', money0(collected), thisMonth, 'invoices')}
+      ${tile('Open Sales', money0(openSOval), openSO.length+' sales order'+(openSO.length===1?'':'s'), 'sales')}
+      ${tile('Open POs', money0(openPOval), openPOs.length+' order'+(openPOs.length===1?'':'s'), 'orders')}
+      ${tile('To Receive', String(toReceive.length), 'POs inbound', 'orders')}
+      ${tile('In Production', String(inProd.length), 'units building', 'sales')}
+      ${tile('Low Stock', String(low.length), 'at/below reorder', 'parts')}
+    </div>
+    <div style="margin-top:18px">
+      ${attn('⚠ Overdue invoices', overdueRows)}
+      ${attn('📦 POs to receive', receiveRows)}
+      ${attn('🏗 Units in production', prodRows)}
+      ${attn('🔻 Low stock', lowRows)}
+      ${jobRows?`<div class="panel" style="padding:12px"><div class="section-lb" style="margin:0 0 8px;padding-top:0;border-top:none">💰 Job costing by unit <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">billed · profit — tap for detail</span></div>${jobRows}</div>`:''}
+    </div>`;
+}
+
+/* ====================== JOB COSTING (per Unit) ====================== */
+function unitCosting(buildId){
+  const orders=(state.orders||[]).filter(o=>o.build_id===buildId && o.status!=='cancelled');
+  const poCost=orders.reduce((a,o)=>a+orderTotals(o).est,0);
+  const sos=(state.salesOrders||[]).filter(o=>o.build_id===buildId && o.status!=='cancelled');
+  const soRevenue=sos.reduce((a,o)=>a+soTotals(o).grand,0);
+  const invs=(state.invoices||[]).filter(v=>v.build_id===buildId && v.status!=='void');
+  const invoiced=invs.reduce((a,v)=>a+invTotal(v),0);
+  const collected=invs.reduce((a,v)=>a+invPaid(v),0);
+  const profit=invoiced-poCost;
+  return {poCost,soRevenue,invoiced,collected,profit,orders,sos,invs};
+}
+function openUnitCosting(buildId){
+  const b=(state.builds||[]).find(x=>x.id===buildId); if(!b){ toast('Unit not found'); return; }
+  const c=unitCosting(buildId);
+  const margin=c.invoiced>0?Math.round(c.profit/c.invoiced*100):null;
+  const poRows=c.orders.length?c.orders.map(o=>`<div class="att" style="cursor:pointer" onclick="viewOrder('${o.id}')">
+      <span><strong class="mono">${esc(o.po_number||'—')}</strong> · ${esc(o.supplier?.name||'')} <span class="sub">${STATUS_MAP[o.status]?.label||o.status}</span></span>
+      <span class="mono">${money0(orderTotals(o).est)}</span></div>`).join('') : '<div class="sub">No purchase orders for this unit.</div>';
+  const invRows=c.invs.length?c.invs.map(v=>`<div class="att" style="cursor:pointer" onclick="viewInvoice('${v.id}')">
+      <span><strong>${esc(v.invoice_number||'—')}</strong> <span class="sub">${invStatus(v).label}</span></span>
+      <span class="mono">${money0(invTotal(v))}</span></div>`).join('') : '<div class="sub">No invoices for this unit yet.</div>';
+  modal(`
+    <div class="mhead"><h2>Job Costing — ${esc(b.name)}</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="cost3">
+        <div class="bcard"><div class="lb">Material cost (POs)</div><div class="amt" style="font-size:24px">${money0(c.poCost)}</div><div class="sb">${c.orders.length} purchase order${c.orders.length===1?'':'s'}</div></div>
+        <div class="bcard"><div class="lb">Billed (invoices)</div><div class="amt" style="font-size:24px">${money0(c.invoiced)}</div><div class="sb">${money0(c.collected)} collected</div></div>
+        <div class="bcard"><div class="lb">Profit</div><div class="amt" style="font-size:24px;color:${c.profit>=0?'var(--ok)':'var(--danger)'}">${money0(c.profit)}</div><div class="sb">${margin!=null?margin+'% margin':'—'}</div></div>
+      </div>
+      <p class="sub" style="margin:10px 0 0">Profit = billed − material cost. Materials come from purchase orders linked to this unit; labor isn't tracked here.${c.soRevenue?` Contracted (sales orders): <strong>${money0(c.soRevenue)}</strong>.`:''}</p>
+      <div class="section-lb">Purchase orders (cost)</div>
+      ${poRows}
+      <div class="section-lb">Invoices (revenue)</div>
+      ${invRows}
+    </div>
+    <div class="mfoot"><span></span><button class="btn primary" onclick="closeModal()">Done</button></div>`);
+}
 
 /* ====================== AUTH / BOOT ====================== */
 async function signIn(){
