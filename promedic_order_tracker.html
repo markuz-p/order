@@ -496,6 +496,7 @@ body.dark .subtabs .tab{background:#14202f}
           <button class="pill ghost" onclick="window.open('https://mail.google.com/','_blank')" title="Open Gmail">✉ Gmail</button>
           <button class="pill ghost" onclick="window.open('https://drive.google.com/','_blank')" title="Open Google Drive"><span class="ico">📁</span> Drive</button>
           <button class="pill ghost" onclick="toggleDark()" id="darkBtn" title="Toggle dark mode">🌙</button>
+          <button class="pill ghost" onclick="openAccounts()" title="Chart of accounts"><span class="ico">📒</span> Accounts</button>
           <button class="pill ghost" onclick="openSettings()" title="Company settings">⚙ Settings</button>
           <button class="pill ghost" onclick="signOut()">Sign out</button>
         </div>
@@ -630,6 +631,11 @@ body.dark .subtabs .tab{background:#14202f}
           <button class="btn primary" onclick="openBill()">＋ New Bill</button>
         </div>
       </div>
+    </section>
+
+    <!-- REPORTS TAB -->
+    <section id="tab-reports" class="hide">
+      <div id="reportsBody"></div>
     </section>
 
     <!-- PARTS TAB -->
@@ -772,7 +778,7 @@ const LOGO_SVG = `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><r
 
 /* ---------- State ---------- */
 let sb = null;
-let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], customers:[], salesOrders:[], invoices:[], bills:[], bomItems:[], tab:'home', area:'home', bomLine:'RP-90', filter:'all', soFilter:'all', invFilter:'all', billFilter:'all', rmaFilter:'open', editing:null, editingPart:null, editingSO:null, editingInv:null, editingBill:null, lineItems:[], soLineItems:[], invLineItems:[], billLineItems:[] };
+let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], customers:[], salesOrders:[], invoices:[], bills:[], bomItems:[], accounts:[], tab:'home', area:'home', bomLine:'RP-90', repPeriod:'year', filter:'all', soFilter:'all', invFilter:'all', billFilter:'all', rmaFilter:'open', editing:null, editingPart:null, editingSO:null, editingInv:null, editingBill:null, lineItems:[], soLineItems:[], invLineItems:[], billLineItems:[] };
 
 /* ---------- Helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -885,7 +891,7 @@ async function loadAll(){
   render();                        // board paints now
   // Wave 2 — everything else, loaded in the background
   state.loading2 = true;
-  const [slp,prt,rma,cus,so,inv,bl,bom] = await Promise.all([
+  const [slp,prt,rma,cus,so,inv,bl,bom,acc] = await Promise.all([
     sb.from('packing_slips').select('*, order:orders(po_number)').order('date_received',{ascending:false}),
     sb.from('parts').select('*, supplier:suppliers(name)').order('description'),
     sb.from('rmas').select('*, supplier:suppliers(name), order:orders(po_number)').order('created_at',{ascending:false}),
@@ -894,6 +900,7 @@ async function loadAll(){
     sb.from('invoices').select('*, customer:customers(name), build:builds(name), items:invoice_items(*), payments:payments(*)').order('updated_at',{ascending:false}),
     sb.from('bills').select('*, supplier:suppliers(name), order:orders(po_number), build:builds(name), items:bill_items(*), payments:bill_payments(*)').order('updated_at',{ascending:false}),
     sb.from('bom_items').select('*').order('sort'),
+    sb.from('accounts').select('*').order('sort'),
   ]);
   for(const r of [slp,prt]){ if(r.error){ console.error(r.error); } }
   state.slips = slp.data||[]; state.parts = prt.data||[];
@@ -903,6 +910,7 @@ async function loadAll(){
   state.invoices = (inv&&!inv.error) ? (inv.data||[]) : [];       // invoices add-on may not be run yet
   state.bills = (bl&&!bl.error) ? (bl.data||[]) : [];             // vendor-bills add-on may not be run yet
   state.bomItems = (bom&&!bom.error) ? (bom.data||[]) : [];       // BOM add-on may not be run yet
+  state.accounts = (acc&&!acc.error) ? (acc.data||[]) : [];       // finance add-on may not be run yet
   state.loading2 = false;
   render();                        // fills parts / slips / trends / RMAs
   el('syncDot').classList.add('on'); el('syncTxt').textContent='Synced';
@@ -968,7 +976,7 @@ function render(){
         </div></div>`;
     }).join('');
   }
-  renderBilling(); renderParts(); renderTrends(); renderRMAs(); renderSales(); renderInvoices(); renderBills(); renderHome(); renderBom(); renderNav();
+  renderBilling(); renderParts(); renderTrends(); renderRMAs(); renderSales(); renderInvoices(); renderBills(); renderHome(); renderBom(); renderReports(); renderNav();
 }
 
 /* ---------- Render: packing slips ---------- */
@@ -1202,9 +1210,9 @@ const AREAS=[
   {key:'sales',     label:'Sales',      ico:'💼', tabs:[{t:'sales',label:'Sales Orders',ico:'💼'},{t:'invoices',label:'Invoices',ico:'🧾'}]},
   {key:'purchasing',label:'Purchasing', ico:'📋', tabs:[{t:'orders',label:'Purchase Orders',ico:'📋'},{t:'bills',label:'Bills',ico:'📑'},{t:'rmas',label:'RMAs',ico:'↩'}]},
   {key:'inventory', label:'Inventory',  ico:'📦', tabs:[{t:'parts',label:'Items',ico:'🔩'},{t:'bom',label:'Production BOM',ico:'🧩'}]},
-  {key:'finance',   label:'Finance',    ico:'💲', tabs:[{t:'billing',label:'Billing',ico:'💲'},{t:'trends',label:'Trends',ico:'📊'}]},
+  {key:'finance',   label:'Finance',    ico:'💲', tabs:[{t:'reports',label:'Reports',ico:'📈'},{t:'billing',label:'Billing',ico:'💲'},{t:'trends',label:'Trends',ico:'📊'}]},
 ];
-const ALL_TABS=['home','orders','sales','invoices','bills','parts','bom','billing','trends','rmas'];
+const ALL_TABS=['home','orders','sales','invoices','bills','parts','bom','reports','billing','trends','rmas'];
 function areaForTab(t){ return AREAS.find(a=>a.tabs.some(x=>x.t===t)); }
 function setTab(t){
   state.tab=t;
@@ -3585,6 +3593,7 @@ function openInvoice(inv=null, seed=null){
         <div class="field"><label>Terms</label><select id="invTerms" onchange="invApplyTerms()">${termOpts}</select></div>
       </div>
       <div class="field"><label>Due Date</label><input id="invDue" type="date" value="${inv?.due_date||''}"/></div>
+      <div class="field"><label>Income account / category</label><select id="invAccount"><option value="">— Uncategorized —</option>${accountOptions('income', inv?inv.account_id:null)}</select></div>
 
       <div class="section-lb">Items <span><button class="linkbtn" onclick="invAddLine()">＋ Blank Row</button></span></div>
       <div class="li-head"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Total</span><span></span></div>
@@ -3647,6 +3656,7 @@ function saveInvoice(){
   const rec={ customer_id, build_id:el('invBuild').value||null, sales_order_id:_invSeedSO||null,
     status:el('invStatusSel').value, invoice_number:no, invoice_date:el('invDate').value||null, due_date:el('invDue').value||null,
     terms:el('invTerms').value||null, tax:tax||null, shipping:ship||null, total:(sub+tax+ship)||null,
+    account_id:el('invAccount').value||null,
     notes:el('invNotes').value.trim()||null, updated_at:new Date().toISOString() };
   (async()=>{
     let invId=state.editingInv?.id;
@@ -3934,6 +3944,7 @@ function openBill(b=null, seed=null){
         <div class="field"><label>Terms</label><select id="blTerms" onchange="billApplyTerms()">${termOpts}</select></div>
       </div>
       <div class="field"><label>Due Date</label><input id="blDue" type="date" value="${b?.due_date||''}"/></div>
+      <div class="field"><label>Expense account / category</label><select id="blAccount"><option value="">— Uncategorized —</option>${accountOptions('expense', b?b.account_id:null)}</select></div>
 
       <div class="section-lb">Items <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">optional — or just set a total below</span> <span><button class="linkbtn" onclick="billAddLine()">＋ Blank Row</button></span></div>
       <div class="li-head"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Total</span><span></span></div>
@@ -3999,7 +4010,7 @@ function saveBill(){
     status:el('blStatus').value, bill_number:el('blNumber').value.trim()||null,
     bill_date:el('blDate').value||null, due_date:el('blDue').value||null, terms:el('blTerms').value||null,
     tax:el('blTax').value?parseFloat(el('blTax').value):null, shipping:el('blShip').value?parseFloat(el('blShip').value):null,
-    total:total||null, notes:el('blNotes').value.trim()||null, updated_at:new Date().toISOString() };
+    total:total||null, account_id:el('blAccount').value||null, notes:el('blNotes').value.trim()||null, updated_at:new Date().toISOString() };
   (async()=>{
     let billId=state.editingBill?.id;
     if(billId){
@@ -4292,6 +4303,176 @@ async function delBomItem(id){
   renderBom();
   undoToast('Removed from BOM', async ()=>{ if(row) await sb.from('bom_items').insert(row);
     const {data}=await sb.from('bom_items').select('*').order('sort'); state.bomItems=data||[]; renderBom(); });
+}
+
+/* ====================== LIGHT FINANCE: CHART OF ACCOUNTS + REPORTS (Phase 5) ====================== */
+const ACCT_TYPES=[['income','Income'],['expense','Expense'],['asset','Asset'],['liability','Liability'],['equity','Equity']];
+function acctTypeLabel(t){ const r=ACCT_TYPES.find(x=>x[0]===t); return r?r[1]:t; }
+function accountsByType(t){ return (state.accounts||[]).filter(a=>a.type===t).sort((a,b)=>(a.code||'').localeCompare(b.code||'')||(a.name||'').localeCompare(b.name||'')); }
+function accountOptions(type, sel){ return accountsByType(type).map(a=>`<option value="${a.id}" ${sel===a.id?'selected':''}>${esc((a.code?a.code+' — ':'')+a.name)}</option>`).join(''); }
+function accountName(id){ const a=(state.accounts||[]).find(x=>x.id===id); return a?((a.code?a.code+' ':'')+a.name):'Uncategorized'; }
+function acctErr(error){ const m=(error&&error.message)||''; if(/relation|does not exist|schema cache|accounts/i.test(m)) return 'Run the Finance add-on SQL in Supabase first'; return 'Save failed: '+m; }
+
+/* ---- Chart of Accounts manager ---- */
+function openAccounts(){
+  modal(`<div class="mhead"><h2>Chart of Accounts</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <p class="sub" style="margin-top:0">Categories for your income and expenses. Tag invoices and bills to these to power the P&amp;L.</p>
+      <div class="grid2">
+        <div class="field"><label>Code</label><input id="acCode" placeholder="e.g. 4000"/></div>
+        <div class="field"><label>Type</label><select id="acType">${ACCT_TYPES.map(t=>`<option value="${t[0]}">${t[1]}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label>Name</label><input id="acName" placeholder="e.g. Ambulance Sales"/></div>
+      <button class="btn primary" onclick="addAccount()">＋ Add account</button>
+      <div id="acctList"></div>
+    </div>
+    <div class="mfoot"><span></span><button class="btn sub" onclick="closeModal()">Done</button></div>`);
+  renderAcctList();
+}
+function renderAcctList(){
+  const box=el('acctList'); if(!box) return;
+  if(!(state.accounts||[]).length){ box.innerHTML='<div class="sub" style="padding:14px 0">No accounts yet. Add one above (or run the Finance add-on for a starter set).</div>'; return; }
+  box.innerHTML=ACCT_TYPES.map(([tk,tl])=>{
+    const list=accountsByType(tk); if(!list.length) return '';
+    return `<div class="section-lb">${tl}</div>`+list.map(a=>`<div class="att" style="cursor:pointer" onclick="editAccount('${a.id}')">
+      <span>${a.code?'<strong class="mono">'+esc(a.code)+'</strong> · ':''}${esc(a.name)}</span>
+      <button class="adel" onclick="event.stopPropagation();delAccount('${a.id}')">✕</button></div>`).join('');
+  }).join('');
+}
+async function addAccount(){
+  const name=el('acName').value.trim(); if(!name){ toast('Name required'); return; }
+  const rec={ name, code:el('acCode').value.trim()||null, type:el('acType').value||'expense', sort:(state.accounts||[]).length*10 };
+  const {error}=await sb.from('accounts').insert(rec);
+  if(error){ toast(acctErr(error)); return; }
+  const {data}=await sb.from('accounts').select('*').order('sort'); state.accounts=data||[];
+  renderAcctList(); el('acName').value=el('acCode').value='';
+}
+function editAccount(id){
+  const a=(state.accounts||[]).find(x=>x.id===id); if(!a) return;
+  modal(`<div class="mhead"><h2>Edit Account</h2><button class="x" onclick="openAccounts()">✕</button></div>
+    <div class="mbody">
+      <div class="grid2">
+        <div class="field"><label>Code</label><input id="eacCode" value="${esc(a.code||'')}"/></div>
+        <div class="field"><label>Type</label><select id="eacType">${ACCT_TYPES.map(t=>`<option value="${t[0]}" ${a.type===t[0]?'selected':''}>${t[1]}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label>Name</label><input id="eacName" value="${esc(a.name||'')}"/></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn warn" onclick="delAccount('${a.id}')">Delete</button>
+      <div style="display:flex;gap:8px"><button class="btn sub" onclick="openAccounts()">Back</button>
+      <button class="btn primary" onclick="saveAccount('${a.id}')">Save</button></div>
+    </div>`);
+}
+async function saveAccount(id){
+  const rec={ name:el('eacName').value.trim(), code:el('eacCode').value.trim()||null, type:el('eacType').value };
+  if(!rec.name){ toast('Name required'); return; }
+  const {error}=await sb.from('accounts').update(rec).eq('id',id);
+  if(error){ toast('Save failed: '+error.message); return; }
+  const {data}=await sb.from('accounts').select('*').order('sort'); state.accounts=data||[];
+  toast('Account updated'); openAccounts();
+}
+async function delAccount(id){
+  if(!confirm('Remove this account? Invoices/bills tagged to it become Uncategorized.'))return;
+  const {data:a}=await sb.from('accounts').select('*').eq('id',id).maybeSingle();
+  await sb.from('accounts').delete().eq('id',id);
+  const {data}=await sb.from('accounts').select('*').order('sort'); state.accounts=data||[];
+  renderAcctList();
+  undoToast('Account removed', async ()=>{ if(a) await sb.from('accounts').insert(a);
+    const {data}=await sb.from('accounts').select('*').order('sort'); state.accounts=data||[]; renderAcctList(); });
+}
+
+/* ---- Reports: P&L, A/R & A/P aging, sales by customer ---- */
+function setRepPeriod(p){ state.repPeriod=p; renderReports(); }
+function repBounds(){
+  const p=state.repPeriod||'year', t=today();
+  if(p==='month') return {label:'This month ('+t.slice(0,7)+')', test:d=>!!d&&d.slice(0,7)===t.slice(0,7)};
+  if(p==='year')  return {label:'This year ('+t.slice(0,4)+')', test:d=>!!d&&d.slice(0,4)===t.slice(0,4)};
+  return {label:'All time', test:()=>true};
+}
+function agingBucket(d){
+  if(!d) return 'current';
+  const days=Math.floor((new Date(today()+'T00:00:00')-new Date(d+'T00:00:00'))/86400000);
+  if(days<=0) return 'current'; if(days<=30) return 'd30'; if(days<=60) return 'd60'; return 'd60p';
+}
+function buildAging(records, totalFn, balFn, dateFn, isVoid){
+  const buckets={current:0,d30:0,d60:0,d60p:0}; let total=0; const open=[];
+  records.forEach(r=>{ if(isVoid(r)) return; const bal=balFn(r); if(bal<=0.004) return;
+    const bk=agingBucket(dateFn(r)); buckets[bk]+=bal; total+=bal; open.push({r,bal,bk,d:dateFn(r)}); });
+  open.sort((a,b)=>(a.d||'9999').localeCompare(b.d||'9999'));
+  return {buckets,total,open};
+}
+function agingTable(a){
+  return `<div class="cost3" style="grid-template-columns:repeat(4,1fr);margin-bottom:4px">
+    <div class="bcard" style="padding:11px 13px"><div class="lb">Current</div><div class="amt" style="font-size:19px">${money0(a.buckets.current)}</div></div>
+    <div class="bcard" style="padding:11px 13px"><div class="lb">1–30 days</div><div class="amt" style="font-size:19px">${money0(a.buckets.d30)}</div></div>
+    <div class="bcard" style="padding:11px 13px"><div class="lb">31–60 days</div><div class="amt" style="font-size:19px">${money0(a.buckets.d60)}</div></div>
+    <div class="bcard" style="padding:11px 13px"><div class="lb">60+ days</div><div class="amt" style="font-size:19px;color:${a.buckets.d60p>0?'var(--danger)':'var(--ink)'}">${money0(a.buckets.d60p)}</div></div>
+  </div>`;
+}
+function renderReports(){
+  const box=el('reportsBody'); if(!box) return;
+  const per=repBounds();
+  // P&L
+  const invs=(state.invoices||[]).filter(v=>v.status!=='void' && per.test(v.invoice_date));
+  const bills=(state.bills||[]).filter(b=>b.status!=='void' && per.test(b.bill_date));
+  const incomeMap={}, expMap={};
+  invs.forEach(v=>{ const k=v.account_id||'__'; incomeMap[k]=(incomeMap[k]||0)+invTotal(v); });
+  bills.forEach(b=>{ const k=b.account_id||'__'; expMap[k]=(expMap[k]||0)+billTotal(b); });
+  const incomeRows=Object.entries(incomeMap).sort((a,b)=>b[1]-a[1]);
+  const expRows=Object.entries(expMap).sort((a,b)=>b[1]-a[1]);
+  const totalIncome=incomeRows.reduce((a,x)=>a+x[1],0), totalExp=expRows.reduce((a,x)=>a+x[1],0);
+  const net=totalIncome-totalExp;
+  const plRow=(k,v)=>`<div class="drow"><span>${esc(k==='__'?'Uncategorized':accountName(k))}</span><span class="mono">${money0(v)}</span></div>`;
+  // Aging (as of today, not period-filtered)
+  const ar=buildAging((state.invoices||[]), invTotal, invBalance, r=>r.due_date||r.invoice_date, r=>r.status==='void'||r.status==='draft');
+  const ap=buildAging((state.bills||[]), billTotal, billBalance, r=>r.due_date||r.bill_date, r=>r.status==='void'||r.status==='draft');
+  // Sales by customer
+  const custMap={};
+  invs.forEach(v=>{ const k=v.customer_id||'__'; custMap[k]=(custMap[k]||0)+invTotal(v); });
+  const custRows=Object.entries(custMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const custName=id=>{ const c=(state.customers||[]).find(x=>x.id===id); return c?c.name:'Unknown'; };
+
+  box.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+      <div class="chip-filter">
+        <button class="fchip ${state.repPeriod==='month'?'on':''}" onclick="setRepPeriod('month')">This month</button>
+        <button class="fchip ${(state.repPeriod==='year'||!state.repPeriod)?'on':''}" onclick="setRepPeriod('year')">This year</button>
+        <button class="fchip ${state.repPeriod==='all'?'on':''}" onclick="setRepPeriod('all')">All time</button>
+      </div>
+      <button class="pill ghost" style="color:var(--ink)" onclick="openAccounts()"><span class="ico">📒</span> Chart of Accounts</button>
+    </div>
+
+    <div class="panel" style="padding:14px 16px;margin-bottom:14px">
+      <div class="section-lb" style="margin:0 0 8px;padding-top:0;border-top:none">Profit &amp; Loss <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">${per.label} · accrual (invoiced vs. billed)</span></div>
+      <div style="font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em;font-size:11px;color:var(--muted);margin:6px 0 2px">Income</div>
+      ${incomeRows.length?incomeRows.map(x=>plRow(x[0],x[1])).join(''):'<div class="sub" style="padding:6px 0">No income in this period.</div>'}
+      <div class="drow" style="border-bottom:none"><strong>Total income</strong><strong class="mono">${money0(totalIncome)}</strong></div>
+      <div style="font-family:Oswald,sans-serif;text-transform:uppercase;letter-spacing:.03em;font-size:11px;color:var(--muted);margin:12px 0 2px">Expenses</div>
+      ${expRows.length?expRows.map(x=>plRow(x[0],x[1])).join(''):'<div class="sub" style="padding:6px 0">No expenses in this period.</div>'}
+      <div class="drow" style="border-bottom:none"><strong>Total expenses</strong><strong class="mono">${money0(totalExp)}</strong></div>
+      <div class="li-total" style="margin-top:10px">Net ${net>=0?'profit':'loss'}: <strong class="mono" style="color:${net>=0?'var(--ok)':'var(--danger)'}">${money0(net)}</strong></div>
+    </div>
+
+    <div class="panel" style="padding:14px 16px;margin-bottom:14px">
+      <div class="section-lb" style="margin:0 0 10px;padding-top:0;border-top:none">A/R Aging <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">owed to you · as of today · ${money0(ar.total)} total</span></div>
+      ${agingTable(ar)}
+      ${ar.open.filter(o=>o.bk!=='current').slice(0,6).map(o=>`<div class="att" style="cursor:pointer" onclick="viewInvoice('${o.r.id}')">
+        <span><strong>${esc(o.r.invoice_number||'—')}</strong> · ${esc(o.r.customer?.name||'')}${o.d?' <span class="sub">due '+fmtDate(o.d)+'</span>':''}</span>
+        <span class="mono" style="color:var(--danger)">${money0(o.bal)}</span></div>`).join('')}
+    </div>
+
+    <div class="panel" style="padding:14px 16px;margin-bottom:14px">
+      <div class="section-lb" style="margin:0 0 10px;padding-top:0;border-top:none">A/P Aging <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">you owe vendors · as of today · ${money0(ap.total)} total</span></div>
+      ${agingTable(ap)}
+      ${ap.open.filter(o=>o.bk!=='current').slice(0,6).map(o=>`<div class="att" style="cursor:pointer" onclick="viewBill('${o.r.id}')">
+        <span><strong>${esc(o.r.bill_number||o.r.supplier?.name||'Bill')}</strong>${o.r.supplier?.name&&o.r.bill_number?' · '+esc(o.r.supplier.name):''}${o.d?' <span class="sub">due '+fmtDate(o.d)+'</span>':''}</span>
+        <span class="mono" style="color:var(--danger)">${money0(o.bal)}</span></div>`).join('')}
+    </div>
+
+    <div class="panel" style="padding:14px 16px">
+      <div class="section-lb" style="margin:0 0 8px;padding-top:0;border-top:none">Sales by Customer <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">${per.label}</span></div>
+      ${custRows.length?custRows.map(x=>`<div class="drow"><span>${esc(x[0]==='__'?'Unknown':custName(x[0]))}</span><span class="mono">${money0(x[1])}</span></div>`).join(''):'<div class="sub" style="padding:6px 0">No invoiced sales in this period.</div>'}
+    </div>`;
 }
 
 /* ====================== AUTH / BOOT ====================== */
