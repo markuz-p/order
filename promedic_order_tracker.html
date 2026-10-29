@@ -338,6 +338,11 @@ body.dark .tr-fill{background:var(--amber)}
 /* header menu: inline on desktop, collapses to a dropdown on phones */
 .navtoggle{display:none}
 .hmenu{display:contents}
+.newmenu-wrap{position:relative;display:inline-block}
+.newmenu{position:absolute;top:calc(100% + 6px);right:0;min-width:192px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 44px rgba(0,0,0,.28);padding:6px;z-index:60;display:none}
+.newmenu.show{display:block}
+.newmenu button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;border:none;color:var(--ink);font-size:14px;font-weight:600;padding:11px 12px;border-radius:8px;cursor:pointer}
+.newmenu button:hover{background:var(--bg)}
 
 @media(max-width:860px){
   .hwrap{padding:10px 14px;gap:10px}
@@ -483,7 +488,14 @@ body.dark .tr-fill{background:var(--amber)}
           <button class="pill ghost" onclick="openSettings()" title="Company settings">⚙ Settings</button>
           <button class="pill ghost" onclick="signOut()">Sign out</button>
         </div>
-        <button class="pill amber" onclick="openOrder()">＋ New Order</button>
+        <div class="newmenu-wrap">
+          <button class="pill amber" id="newBtn" onclick="toggleNewMenu(event)">＋ New ▾</button>
+          <div class="newmenu" id="newMenu">
+            <button onclick="pickNew('po')"><span class="ico">📋</span> Purchase Order</button>
+            <button onclick="pickNew('so')"><span class="ico">💼</span> Sales Order</button>
+            <button onclick="pickNew('cust')"><span class="ico">👤</span> Customer</button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -499,6 +511,7 @@ body.dark .tr-fill{background:var(--amber)}
     </div>
     <div class="tabs">
       <button class="tab active" data-tab="orders" onclick="setTab('orders')"><span class="ico">📋</span> Orders</button>
+      <button class="tab" data-tab="sales" onclick="setTab('sales')"><span class="ico">💼</span> Sales Orders</button>
       <button class="tab" data-tab="parts" onclick="setTab('parts')"><span class="ico">🔩</span> Parts</button>
       <button class="tab" data-tab="packing" onclick="setTab('packing')"><span class="ico">📦</span> Packing Slips</button>
       <button class="tab" data-tab="billing" onclick="setTab('billing')"><span class="ico">💲</span> Billing</button>
@@ -528,6 +541,32 @@ body.dark .tr-fill{background:var(--amber)}
         <div class="empty hide" id="ordersEmpty">
           <h3>No orders yet</h3><p>Log your first parts order to start the pipeline.</p>
           <button class="btn primary" onclick="openOrder()">＋ New Order</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SALES ORDERS TAB -->
+    <section id="tab-sales" class="hide">
+      <div class="rail" id="soRail"></div>
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          <input id="soSearch" placeholder="Search sales orders — SO#, customer, unit…" oninput="renderSales()" />
+        </div>
+        <button class="pill ghost" onclick="openCustomers()" style="color:var(--ink)"><span class="ico">👥</span> Customers</button>
+        <button class="pill amber" onclick="openSalesOrder()" style="color:#3a2800">＋ New Sales Order</button>
+      </div>
+      <div class="panel">
+        <table>
+          <thead><tr>
+            <th>SO #</th><th>Customer</th><th>Unit / Build</th><th>Items</th><th>Total</th><th>Status</th><th>Delivery</th><th>Updated</th>
+          </tr></thead>
+          <tbody id="soBody"></tbody>
+        </table>
+        <div class="cards" id="soCards"></div>
+        <div class="empty hide" id="soEmpty">
+          <h3>No sales orders yet</h3><p>Create a sales order when a customer orders a unit or remount.</p>
+          <button class="btn primary" onclick="openSalesOrder()">＋ New Sales Order</button>
         </div>
       </div>
     </section>
@@ -652,6 +691,15 @@ const STATUSES = [
 ];
 const STATUS_MAP = Object.fromEntries(STATUSES.map(s=>[s.key,s]));
 STATUS_MAP.cancelled = {key:'cancelled',label:'Cancelled',sub:'',varc:'--s-cancelled'};
+const SO_STATUSES = [
+  {key:'quote',      label:'Quote',         sub:'Not yet confirmed', varc:'--s-quoted'},
+  {key:'confirmed',  label:'Confirmed',     sub:'Customer approved', varc:'--s-submitted'},
+  {key:'production', label:'In Production', sub:'Being built',       varc:'--s-awaiting'},
+  {key:'delivered',  label:'Delivered',     sub:'Handed off',        varc:'--s-shipped'},
+  {key:'invoiced',   label:'Invoiced',      sub:'Billed',            varc:'--s-received'},
+];
+const SO_MAP = Object.fromEntries(SO_STATUSES.map(s=>[s.key,s]));
+SO_MAP.cancelled = {key:'cancelled',label:'Cancelled',sub:'',varc:'--s-cancelled'};
 const CARRIERS = ['UPS','FedEx','USPS','LTL Freight','Will Call','Other'];
 const RMA_STAGES = [
   {key:'requested', label:'Requested',  varc:'--s-quoted'},
@@ -667,7 +715,7 @@ const LOGO_SVG = `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><r
 
 /* ---------- State ---------- */
 let sb = null;
-let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], tab:'orders', filter:'all', rmaFilter:'open', editing:null, editingPart:null, lineItems:[] };
+let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], customers:[], salesOrders:[], tab:'orders', filter:'all', soFilter:'all', rmaFilter:'open', editing:null, editingPart:null, editingSO:null, lineItems:[], soLineItems:[] };
 
 /* ---------- Helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -780,14 +828,18 @@ async function loadAll(){
   render();                        // board paints now
   // Wave 2 — everything else, loaded in the background
   state.loading2 = true;
-  const [slp,prt,rma] = await Promise.all([
+  const [slp,prt,rma,cus,so] = await Promise.all([
     sb.from('packing_slips').select('*, order:orders(po_number)').order('date_received',{ascending:false}),
     sb.from('parts').select('*, supplier:suppliers(name)').order('description'),
     sb.from('rmas').select('*, supplier:suppliers(name), order:orders(po_number)').order('created_at',{ascending:false}),
+    sb.from('customers').select('*').order('name'),
+    sb.from('sales_orders').select('*, customer:customers(name), build:builds(name), items:sales_order_items(*)').order('updated_at',{ascending:false}),
   ]);
   for(const r of [slp,prt]){ if(r.error){ console.error(r.error); } }
   state.slips = slp.data||[]; state.parts = prt.data||[];
   state.rmas = (rma&&!rma.error) ? (rma.data||[]) : [];   // table may not exist until the RMA add-on is run
+  state.customers = (cus&&!cus.error) ? (cus.data||[]) : [];       // sales add-on may not be run yet
+  state.salesOrders = (so&&!so.error) ? (so.data||[]) : [];
   state.loading2 = false;
   render();                        // fills parts / slips / trends / RMAs
   el('syncDot').classList.add('on'); el('syncTxt').textContent='Synced';
@@ -853,7 +905,7 @@ function render(){
         </div></div>`;
     }).join('');
   }
-  renderSlips(); renderBilling(); renderParts(); renderTrends(); renderRMAs();
+  renderSlips(); renderBilling(); renderParts(); renderTrends(); renderRMAs(); renderSales();
 }
 
 /* ---------- Render: packing slips ---------- */
@@ -978,6 +1030,8 @@ function globalSearchRun(){
   const sups=state.suppliers.filter(s=>[s.name,s.email,s.contact,s.customer_number].some(has)).slice(0,6);
   const units=state.builds.filter(b=>[b.name,b.customer,b.line].some(has)).slice(0,6);
   const rmas=(state.rmas||[]).filter(r=>[r.rma_number,r.sku,r.description,r.supplier?.name,r.order?.po_number].some(has)).slice(0,6);
+  const sos=(state.salesOrders||[]).filter(o=>[o.so_number,o.customer?.name,o.build?.name,o.po_reference,o.notes].some(has)||(o.items||[]).some(i=>has(i.sku)||has(i.description))).slice(0,6);
+  const custs=(state.customers||[]).filter(c=>[c.name,c.email,c.contact,c.phone].some(has)).slice(0,6);
   let html='';
   if(orders.length){ html+='<div class="gs-group">Orders</div>'+orders.map(o=>`
     <div class="gs-item" onclick="gsOpenOrder('${o.id}')"><div class="gi-main"><strong>${esc(o.po_number||'(no PO#)')}</strong>
@@ -999,6 +1053,14 @@ function globalSearchRun(){
     <div class="gs-item" onclick="gsOpenRMA('${r.id}')"><div class="gi-main"><strong>${esc(r.supplier?.name||'RMA')}${r.rma_number?' · '+esc(r.rma_number):''}</strong>
       <div class="gi-sub">${esc(r.description||r.sku||'')}</div></div>
       <div class="gi-right">${RMA_MAP[r.status]?.label||r.status}</div></div>`).join(''); }
+  if(sos.length){ html+='<div class="gs-group">Sales Orders</div>'+sos.map(o=>`
+    <div class="gs-item" onclick="gsOpenSO('${o.id}')"><div class="gi-main"><strong>${esc(o.so_number||'SO')}</strong>
+      <div class="gi-sub">${esc(o.customer?.name||'—')}${o.build?.name?' · '+esc(o.build.name):''}</div></div>
+      <div class="gi-right">${SO_MAP[o.status]?.label||o.status} · ${money0(soTotals(o).grand)}</div></div>`).join(''); }
+  if(custs.length){ html+='<div class="gs-group">Customers</div>'+custs.map(c=>`
+    <div class="gs-item" onclick="gsOpenCustomer('${c.id}')"><div class="gi-main"><strong>${esc(c.name)}</strong>
+      <div class="gi-sub">${esc(c.email||c.phone||'')}</div></div>
+      <div class="gi-right">${(state.salesOrders||[]).filter(s=>s.customer_id===c.id).length} SO</div></div>`).join(''); }
   if(!html) html='<div class="gs-empty">No matches for “'+esc(q)+'”.</div>';
   box.innerHTML=html; box.classList.remove('hide');
 }
@@ -1074,7 +1136,7 @@ function handleDeepLink(){
 
 function setTab(t){ state.tab=t;
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
-  ['orders','parts','packing','billing','trends','rmas'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
+  ['orders','sales','parts','packing','billing','trends','rmas'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
 }
 function setFilter(k){ state.filter = state.filter===k?'all':k; render(); }
 
@@ -2929,6 +2991,395 @@ function buildQuote(id, opts){
 
   return { doc, o, quoteNo, filename:`Quote_${quoteNo.replace(/[^\w.\-]/g,'_')}.pdf` };
 }
+
+/* ====================== SALES ORDERS & CUSTOMERS (Phase 1) ====================== */
+
+/* ---- "+ New" header dropdown ---- */
+function toggleNewMenu(e){ if(e) e.stopPropagation(); const m=el('newMenu'); if(m) m.classList.toggle('show'); }
+function pickNew(kind){ const m=el('newMenu'); if(m) m.classList.remove('show');
+  if(kind==='po') openOrder(); else if(kind==='so') openSalesOrder(); else if(kind==='cust') openCustomers(); }
+document.addEventListener('click',function(e){
+  const m=el('newMenu'); if(!m||!m.classList.contains('show')) return;
+  if(e.target.closest('#newBtn')) return;
+  m.classList.remove('show');
+});
+
+/* friendly error when the Sales add-on hasn't been run yet */
+function saleErr(error){ const m=(error&&error.message)||''; if(/relation|does not exist|schema cache|sales_order|customers/i.test(m)) return 'Run the Sales add-on SQL in Supabase first'; return 'Save failed: '+m; }
+
+/* ---- Sales order helpers ---- */
+function soTotals(so){
+  const items=so.items||[];
+  const qty=items.reduce((a,i)=>a+(Number(i.qty)||0),0);
+  const sub=items.reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.unit_price)||0),0);
+  const grand=(so.total!=null&&so.total!=='')?Number(so.total):sub+(Number(so.tax)||0)+(Number(so.shipping)||0);
+  return {qty,sub,grand};
+}
+function soNextNumber(){
+  let max=0; (state.salesOrders||[]).forEach(s=>{ const m=/SO-?(\d+)/i.exec(s.so_number||''); if(m) max=Math.max(max,parseInt(m[1],10)); });
+  return 'SO-'+String(max+1).padStart(4,'0');
+}
+function filteredSalesOrders(){
+  const q=(el('soSearch')?.value||'').toLowerCase().trim();
+  return (state.salesOrders||[]).filter(s=>{
+    if(state.soFilter!=='all' && s.status!==state.soFilter) return false;
+    if(!q) return true;
+    const hay=[s.so_number,s.customer?.name,s.build?.name,s.po_reference,s.notes,...(s.items||[]).flatMap(i=>[i.sku,i.description])].join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+}
+function setSoFilter(k){ state.soFilter = state.soFilter===k?'all':k; renderSales(); }
+
+function renderSales(){
+  const rail=el('soRail'); if(!rail) return;
+  rail.innerHTML = SO_STATUSES.map(s=>{
+    const c=(state.salesOrders||[]).filter(o=>o.status===s.key).length;
+    const sel=state.soFilter===s.key?' sel':'';
+    return `<button class="stage${sel}" style="--sc:var(${s.varc})" onclick="setSoFilter('${s.key}')">
+      <span class="dotc"></span><div class="n">${c}</div><div class="lb">${s.label}</div><div class="sb">${s.sub}</div></button>`;
+  }).join('');
+  const body=el('soBody'), cards=el('soCards');
+  if(state.loading2 && !(state.salesOrders||[]).length){
+    el('soEmpty').classList.add('hide');
+    body.innerHTML='<tr><td colspan="8" class="sub" style="text-align:center;padding:30px">Loading sales orders…</td></tr>';
+    cards.innerHTML='<div class="sub" style="text-align:center;padding:30px">Loading…</div>'; return;
+  }
+  el('soEmpty').classList.toggle('hide', (state.salesOrders||[]).length>0);
+  const list=filteredSalesOrders();
+  if(!list.length){ body.innerHTML=''; cards.innerHTML=''; return; }
+  body.innerHTML=list.map(o=>{
+    const t=soTotals(o), st=SO_MAP[o.status]||SO_MAP.quote;
+    return `<tr onclick="viewSalesOrder('${o.id}')">
+      <td class="po mono">${esc(o.so_number||'—')}</td>
+      <td>${esc(o.customer?.name||'—')}</td>
+      <td>${o.build?.name?esc(o.build.name):'<span class=sub>—</span>'}</td>
+      <td class="mono">${t.qty||'—'}</td>
+      <td class="mono">${t.grand?money0(t.grand):'—'}</td>
+      <td><span class="badge" style="--sc:var(${st.varc})">${st.label}</span></td>
+      <td>${o.delivery_date?fmtDate(o.delivery_date):'—'}</td>
+      <td class="sub">${timeAgo(o.updated_at)}</td></tr>`;
+  }).join('');
+  cards.innerHTML=list.map(o=>{
+    const t=soTotals(o), st=SO_MAP[o.status]||SO_MAP.quote;
+    return `<div class="ocard" onclick="viewSalesOrder('${o.id}')">
+      <div class="top"><div><div class="po mono">${esc(o.so_number||'No SO#')}</div>
+        <div class="sub">${esc(o.customer?.name||'—')}${o.build?.name?' · '+esc(o.build.name):''}</div></div>
+        <span class="badge" style="--sc:var(${st.varc})">${st.label}</span></div>
+      <div class="meta"><span>Items <strong class="mono">${t.qty||'—'}</strong></span>
+        <span>Total <strong class="mono">${t.grand?money0(t.grand):'—'}</strong></span>
+        <span>${o.delivery_date?'Due '+fmtDate(o.delivery_date):'No date'}</span></div></div>`;
+  }).join('');
+}
+
+/* ---- Sales order editor ---- */
+function openSalesOrder(so=null, seed=null){
+  state.editingSO = so;
+  const src=so||seed;
+  state.soLineItems = src ? (src.items||[]).map(i=>({sku:i.sku||'',description:i.description||'',qty:i.qty||1,unit_price:i.unit_price||0}))
+                          : [{sku:'',description:'',qty:1,unit_price:0}];
+  const custOpts=(state.customers||[]).map(c=>`<option value="${c.id}" ${so&&so.customer_id===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+  const bldOpts=state.builds.map(b=>`<option value="${b.id}" ${so&&so.build_id===b.id?'selected':''}>${esc(b.name)}</option>`).join('');
+  const stOpts=[...SO_STATUSES,SO_MAP.cancelled].map(x=>`<option value="${x.key}" ${so?(so.status===x.key?'selected':''):(x.key==='quote'?'selected':'')}>${x.label}</option>`).join('');
+  modal(`
+    <div class="mhead"><h2>${so?'Edit Sales Order':'New Sales Order'}</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="grid2">
+        <div class="field"><label>Customer <span class="req">*</span> <button class="linkbtn" style="float:right;font-size:11px" onclick="openCustomers()">＋ New customer</button></label>
+          <select id="soCustomer"><option value="">— Select —</option>${custOpts}</select></div>
+        <div class="field"><label>Unit / Build</label><select id="soBuild"><option value="">— None —</option>${bldOpts}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Status</label><select id="soStatus">${stOpts}</select></div>
+        <div class="field"><label>SO Number</label><input id="soNumber" value="${esc(so?.so_number||'')}" placeholder="${soNextNumber()}"/></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Order Date</label><input id="soOrderDate" type="date" value="${so?.order_date||today()}"/></div>
+        <div class="field"><label>Delivery / Due Date</label><input id="soDelivery" type="date" value="${so?.delivery_date||''}"/></div>
+      </div>
+      <div class="field"><label>Customer PO # (their PO to you)</label><input id="soPoRef" value="${esc(so?.po_reference||'')}" placeholder="optional"/></div>
+
+      <div class="section-lb">Items <span><button class="linkbtn" onclick="soAddLine()">＋ Blank Row</button></span></div>
+      <div class="li-head"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Total</span><span></span></div>
+      <div id="soLineItems"></div>
+
+      <div class="grid2" style="margin-top:12px">
+        <div class="field"><label>Tax ($)</label><input id="soTax" type="number" step="0.01" value="${so?.tax||''}" oninput="updateSoTotal()"/></div>
+        <div class="field"><label>Shipping ($)</label><input id="soShip" type="number" step="0.01" value="${so?.shipping||''}" oninput="updateSoTotal()"/></div>
+      </div>
+      <div class="li-total">Subtotal: <strong class="mono" id="soSubTotal">$0.00</strong> &nbsp;·&nbsp; Total: <strong class="mono" id="soGrand">$0.00</strong></div>
+
+      <div class="field" style="margin-top:12px"><label>Notes</label><textarea id="soNotes">${esc(so?.notes||'')}</textarea></div>
+    </div>
+    <div class="mfoot">
+      <div>${so?`<button class="btn warn" onclick="deleteSalesOrder('${so.id}')">Delete</button>`:''}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" onclick="saveSalesOrder()">${so?'Save changes':'Create sales order'}</button>
+      </div>
+    </div>`);
+  renderSoLines();
+  if(!so) setTimeout(()=>el('soCustomer')?.focus(),60);
+}
+function renderSoLines(){
+  el('soLineItems').innerHTML = state.soLineItems.map((it,i)=>`<div class="li">
+    <input value="${esc(it.sku||'')}" placeholder="SKU" oninput="soSetLine(${i},'sku',this.value)" onkeydown="soLineKey(event,${i})"/>
+    <input value="${esc(it.description||'')}" placeholder="Description" oninput="soSetLine(${i},'description',this.value)" onkeydown="soLineKey(event,${i})"/>
+    <input class="mono" type="number" min="0" title="Qty" placeholder="Qty" value="${it.qty??1}" oninput="soSetLine(${i},'qty',this.value)" onkeydown="soLineKey(event,${i})"/>
+    <input class="mono" type="number" min="0" step="0.01" title="Unit price" placeholder="Unit $" value="${it.unit_price??0}" oninput="soSetLine(${i},'unit_price',this.value)" onkeydown="soLineKey(event,${i})"/>
+    <span class="mono soLineTot" style="align-self:center;text-align:right;font-size:13px">${money((Number(it.qty)||0)*(Number(it.unit_price)||0))}</span>
+    <button class="lidel" onclick="soDelLine(${i})">✕</button></div>`).join('');
+  updateSoTotal();
+}
+function soFocusRow(i){ const rows=el('soLineItems').querySelectorAll('.li'); rows[i]?.querySelector('input')?.focus(); }
+function soAddLine(){ state.soLineItems.push({sku:'',description:'',qty:1,unit_price:0}); renderSoLines(); soFocusRow(state.soLineItems.length-1); }
+function soDelLine(i){ state.soLineItems.splice(i,1); if(!state.soLineItems.length) soAddLine(); else renderSoLines(); }
+function soSetLine(i,k,v){ state.soLineItems[i][k]=(k==='sku'||k==='description')?v:parseFloat(v||0); if(k==='qty'||k==='unit_price') updateSoTotal(); }
+function soLineKey(e,i){ if(e.key!=='Enter')return; e.preventDefault(); if(i>=state.soLineItems.length-1) soAddLine(); else soFocusRow(i+1); }
+function soItemsTotal(){ return state.soLineItems.reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.unit_price)||0),0); }
+function updateSoTotal(){
+  document.querySelectorAll('#soLineItems .li').forEach((row,idx)=>{ const it=state.soLineItems[idx]; if(!it)return;
+    const span=row.querySelector('.soLineTot'); if(span) span.textContent=money((Number(it.qty)||0)*(Number(it.unit_price)||0)); });
+  const sub=soItemsTotal(), tax=Number(el('soTax')?.value)||0, ship=Number(el('soShip')?.value)||0;
+  if(el('soSubTotal')) el('soSubTotal').textContent=money(sub);
+  if(el('soGrand')) el('soGrand').textContent=money(sub+tax+ship);
+}
+function saveSalesOrder(){
+  const customer_id=el('soCustomer').value;
+  if(!customer_id){ toast('Pick a customer first'); return; }
+  let soNo=el('soNumber').value.trim(); if(!soNo) soNo=soNextNumber();
+  const sub=soItemsTotal(), tax=el('soTax').value?parseFloat(el('soTax').value):0, ship=el('soShip').value?parseFloat(el('soShip').value):0;
+  const rec={ customer_id, build_id:el('soBuild').value||null, status:el('soStatus').value,
+    so_number:soNo, order_date:el('soOrderDate').value||null, delivery_date:el('soDelivery').value||null,
+    po_reference:el('soPoRef').value.trim()||null, tax:tax||null, shipping:ship||null, total:(sub+tax+ship)||null,
+    notes:el('soNotes').value.trim()||null, updated_at:new Date().toISOString() };
+  (async()=>{
+    let soId=state.editingSO?.id;
+    if(soId){
+      const {error}=await sb.from('sales_orders').update(rec).eq('id',soId);
+      if(error){ toast(saleErr(error)); return; }
+      await sb.from('sales_order_items').delete().eq('sales_order_id',soId);
+    } else {
+      const {data,error}=await sb.from('sales_orders').insert(rec).select('id').single();
+      if(error){ toast(saleErr(error)); return; }
+      soId=data.id;
+    }
+    const items=state.soLineItems.filter(i=>i.sku||i.description||i.qty)
+      .map(i=>({sales_order_id:soId,sku:i.sku||null,description:i.description||null,qty:Number(i.qty)||0,unit_price:Number(i.unit_price)||0}));
+    if(items.length){ const {error}=await sb.from('sales_order_items').insert(items); if(error) toast('Items error: '+error.message); }
+    closeModal(); toast(state.editingSO?'Sales order updated':'Sales order created'); await loadAll();
+  })();
+}
+function viewSalesOrder(id){
+  const o=(state.salesOrders||[]).find(x=>x.id===id); if(!o) return;
+  const st=SO_MAP[o.status]||SO_MAP.quote, t=soTotals(o);
+  const idx=SO_STATUSES.findIndex(s=>s.key===o.status);
+  const next=(idx>=0&&idx<SO_STATUSES.length-1)?SO_STATUSES[idx+1]:null;
+  const cust=(state.customers||[]).find(c=>c.id===o.customer_id);
+  const itemsHtml=(o.items||[]).length?`
+    <div class="li-head" style="margin-top:6px"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Total</span><span></span></div>
+    ${o.items.map(i=>`<div class="recv-row">
+      <span class="mono">${esc(i.sku||'—')}</span><span>${esc(i.description||'—')}</span>
+      <span class="mono">${i.qty}</span><span class="mono">${money(i.unit_price)}</span>
+      <span class="mono">${money((Number(i.qty)||0)*(Number(i.unit_price)||0))}</span><span></span></div>`).join('')}`
+    : '<div class="sub">No items on this sales order.</div>';
+  modal(`
+    <div class="mhead"><h2>${esc(o.so_number||'Sales Order')} <span class="badge" style="--sc:var(${st.varc});vertical-align:middle;margin-left:8px">${st.label}</span></h2>
+      <button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="drow"><span class="k">Customer</span><span><strong>${esc(cust?.name||o.customer?.name||'—')}</strong>${cust?.phone?' · '+esc(cust.phone):''}</span></div>
+      ${o.build?.name?`<div class="drow"><span class="k">Unit / Build</span><span>${esc(o.build.name)}</span></div>`:''}
+      ${o.po_reference?`<div class="drow"><span class="k">Customer PO #</span><span class="mono">${esc(o.po_reference)}</span></div>`:''}
+      <div class="drow"><span class="k">Order date</span><span>${o.order_date?fmtDate(o.order_date):'—'}</span></div>
+      <div class="drow"><span class="k">Delivery / due</span><span>${o.delivery_date?fmtDate(o.delivery_date):'—'}</span></div>
+      ${next?`<div style="margin:12px 0"><button class="btn ok" onclick="advanceSO('${o.id}','${next.key}')">Advance to ${next.label} →</button></div>`:''}
+      <div class="section-lb">Items</div>
+      ${itemsHtml}
+      <div class="li-total">Subtotal <strong class="mono">${money(t.sub)}</strong>${o.tax?` · Tax <strong class="mono">${money(o.tax)}</strong>`:''}${o.shipping?` · Shipping <strong class="mono">${money(o.shipping)}</strong>`:''} &nbsp;·&nbsp; Total <strong class="mono">${money(t.grand)}</strong></div>
+      ${o.notes?`<div class="section-lb">Notes</div><div class="sub" style="white-space:pre-wrap">${esc(o.notes)}</div>`:''}
+    </div>
+    <div class="mfoot">
+      <button class="btn sub" onclick="downloadSalesOrder('${o.id}')">⬇ PDF</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="openSalesOrder((state.salesOrders||[]).find(x=>x.id==='${o.id}'))">Edit</button>
+        <button class="btn primary" onclick="closeModal()">Done</button>
+      </div>
+    </div>`);
+}
+function advanceSO(id,key){
+  const o=(state.salesOrders||[]).find(x=>x.id===id); if(!o)return;
+  o.status=key; o.updated_at=new Date().toISOString();
+  reliableWrite('so-status:'+id, ()=>sb.from('sales_orders').update({status:key,updated_at:o.updated_at}).eq('id',id));
+  renderSales(); viewSalesOrder(id);
+}
+async function deleteSalesOrder(id){
+  if(!confirm('Delete this sales order and its items?\n(You can Undo for a few seconds after.)')) return;
+  const {data:so}=await sb.from('sales_orders').select('*').eq('id',id).maybeSingle();
+  const {data:items}=await sb.from('sales_order_items').select('*').eq('sales_order_id',id);
+  const {error}=await sb.from('sales_orders').delete().eq('id',id);
+  if(error){ toast('Delete failed: '+error.message); return; }
+  closeModal(); await loadAll();
+  undoToast('Sales order deleted', async ()=>{
+    if(so) await sb.from('sales_orders').insert(so);
+    if(items&&items.length) await sb.from('sales_order_items').insert(items);
+    await loadAll();
+  });
+}
+
+/* ---- Sales order PDF (customer-facing) ---- */
+function downloadSalesOrder(id){ const r=buildSalesOrderPdf(id); if(!r){ toast('Could not build PDF'); return; } r.doc.save(r.filename); toast('Sales order PDF downloaded'); }
+function buildSalesOrderPdf(id){
+  const o=(state.salesOrders||[]).find(x=>x.id===id); if(!o) return null;
+  const cust=(state.customers||[]).find(c=>c.id===o.customer_id);
+  const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'letter'});
+  const blue=[31,111,178], red=[193,32,43], navy=[35,80,127], dark=[22,24,29], ink=[45,55,72], muted=[120,132,150], line=[228,231,236];
+  const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=48, RX=PW-M;
+  let mastheadBottom=88;
+  try{ const [ow,oh]=brandLogoWH(); let lw=210,lh=lw*(oh/ow); if(lh>72){lh=72;lw=lh*(ow/oh);}
+    const data=brandLogo(); const fmt=/^data:image\/png/i.test(data)?'PNG':'JPEG';
+    doc.addImage(data,fmt,M,40,lw,lh); mastheadBottom=40+lh; }catch(e){}
+  doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(...muted);
+  doc.text('Sales Order', M, mastheadBottom+24);
+  let y=mastheadBottom+24, my=44;
+  const metaLine=(label,val)=>{ doc.setFontSize(9); doc.setTextColor(...muted); doc.setFont('helvetica','normal');
+    doc.text(label.toUpperCase(), RX-190, my); doc.setTextColor(...navy); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text(String(val||'—'), RX, my, {align:'right'}); my+=17; };
+  metaLine('SO #', o.so_number||'—');
+  metaLine('Date', o.order_date?fmtDate(o.order_date):fmtDate(today()));
+  if(o.delivery_date) metaLine('Delivery', fmtDate(o.delivery_date));
+  if(o.po_reference) metaLine('Your PO #', o.po_reference);
+  if(o.build?.name) metaLine('Unit / Build', o.build.name);
+  y+=14; doc.setDrawColor(...line); doc.setLineWidth(1); doc.line(M,y,RX,y);
+  y+=22; const blockTop=y;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...ink); doc.text('BILL TO', M, y);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...navy);
+  doc.text(cust?.name || o.customer?.name || 'Customer', M, y+17);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...muted); let cy=y+32;
+  if(cust?.billing_address){ doc.splitTextToSize(String(cust.billing_address), (PW-M*2)*0.5).forEach(ln=>{ doc.text(ln,M,cy); cy+=13; }); }
+  if(cust?.phone){ doc.text(String(cust.phone), M, cy); cy+=13; }
+  const SX=M+(PW-M*2)*0.55;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...ink); doc.text('FROM', SX, blockTop);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...navy); doc.text(brandName(), SX, blockTop+17);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...muted); let ty=blockTop+32;
+  doc.splitTextToSize(brandShipTo(), PW-M-SX).forEach(ln=>{ doc.text(ln, SX, ty); ty+=13; });
+  y=Math.max(cy, ty, blockTop+44)+8;
+  let subtotal=0;
+  const rows=(o.items||[]).map(i=>{ const lt=(Number(i.qty)||0)*(Number(i.unit_price)||0); subtotal+=lt;
+    return [i.description||i.sku||'Item', String(i.qty||0), money(i.unit_price), money(lt)]; });
+  doc.autoTable({ startY:y, head:[['Description','Qty','Unit Price','Total']], body:rows.length?rows:[['No items','','','']],
+    theme:'grid', headStyles:{ fillColor:[14,32,56], textColor:255, fontStyle:'bold', fontSize:9 },
+    bodyStyles:{ fontSize:9, textColor:[30,40,60] },
+    columnStyles:{ 1:{halign:'center',cellWidth:46}, 2:{halign:'right',cellWidth:78}, 3:{halign:'right',cellWidth:82} },
+    margin:{ left:M, right:M } });
+  let ey=doc.lastAutoTable.finalY+14;
+  const tax=Number(o.tax)||0, ship=Number(o.shipping)||0;
+  const totLine=(label,val,bold)=>{ doc.setFont('helvetica',bold?'bold':'normal'); doc.setFontSize(bold?11:9.5);
+    doc.setTextColor(...(bold?navy:muted)); doc.text(label, RX-150, ey); doc.setTextColor(...(bold?navy:ink));
+    doc.text(money(val), RX, ey, {align:'right'}); ey+=15; };
+  totLine('Subtotal', subtotal); if(tax) totLine('Tax', tax); if(ship) totLine('Shipping', ship);
+  const grand=subtotal+tax+ship;
+  ey+=4; const barW=230, barH=30, barX=RX-barW;
+  doc.setFillColor(...dark); doc.roundedRect(barX, ey, barW, barH, 5,5,'F');
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(210,214,222); doc.text('ORDER TOTAL', barX+14, ey+19);
+  doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.setTextColor(255,255,255); doc.text(money(grand), barX+barW-14, ey+20, {align:'right'});
+  const fy=PH-40; doc.setDrawColor(...line); doc.setLineWidth(1); doc.line(M,fy-14,RX,fy-14);
+  doc.setFillColor(...blue); doc.rect(M,fy-4,20,4,'F'); doc.setFillColor(...red); doc.rect(M+20,fy-4,20,4,'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...muted);
+  doc.text('Powered by Piercy Software', RX, fy-1, {align:'right'});
+  return { doc, o, filename:`SalesOrder_${(o.so_number||o.id.slice(0,6)).replace(/[^\w.\-]/g,'_')}.pdf` };
+}
+
+/* ---- Customers manager ---- */
+function openCustomers(){
+  modal(`<div class="mhead"><h2>Customers</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="grid2">
+        <div class="field"><label>Name</label><input id="cuName" placeholder="Customer / agency name"/></div>
+        <div class="field"><label>Contact</label><input id="cuContact"/></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Phone</label><input id="cuPhone"/></div>
+        <div class="field"><label>Email</label><input id="cuEmail" placeholder="billing@customer.com"/></div>
+      </div>
+      <div class="field"><label>Billing address</label><textarea id="cuAddr" rows="2" placeholder="Street, City, ST ZIP"></textarea></div>
+      <div class="grid2">
+        <div class="field"><label>Payment terms</label><input id="cuTerms" placeholder="e.g. Net 30"/></div>
+        <div class="field"><label>Notes</label><input id="cuNotes"/></div>
+      </div>
+      <button class="btn primary" onclick="addCustomer()">＋ Add customer</button>
+      <div class="section-lb">Current <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">tap one to edit</span></div>
+      <div id="custList"></div>
+    </div>
+    <div class="mfoot"><span></span><button class="btn sub" onclick="closeModal()">Done</button></div>`);
+  renderCustList();
+}
+function renderCustList(){
+  const box=el('custList'); if(!box)return;
+  const list=state.customers||[];
+  box.innerHTML = list.length? list.map(c=>{
+    const n=(state.salesOrders||[]).filter(s=>s.customer_id===c.id).length;
+    return `<div class="att" style="cursor:pointer" onclick="editCustomer('${c.id}')">
+      <span><strong>${esc(c.name)}</strong>${c.email?' · '+esc(c.email):''}${c.terms?' <span class="sub">· '+esc(c.terms)+'</span>':''}</span>
+      <span class="sub">${n?n+' SO ':''}<button class="adel" onclick="event.stopPropagation();delCustomer('${c.id}')">✕</button></span></div>`;
+  }).join('') : '<div class="sub">None yet.</div>';
+}
+async function addCustomer(){
+  const name=el('cuName').value.trim(); if(!name){ toast('Name required'); return; }
+  const rec={ name, contact:el('cuContact').value.trim()||null, phone:el('cuPhone').value.trim()||null,
+    email:el('cuEmail').value.trim()||null, billing_address:el('cuAddr').value.trim()||null,
+    terms:el('cuTerms').value.trim()||null, notes:el('cuNotes').value.trim()||null };
+  const {error}=await sb.from('customers').insert(rec);
+  if(error){ toast(saleErr(error)); return; }
+  const {data}=await sb.from('customers').select('*').order('name'); state.customers=data||[];
+  renderCustList(); toast('Customer added');
+  ['cuName','cuContact','cuPhone','cuEmail','cuAddr','cuTerms','cuNotes'].forEach(id=>{ const e=el(id); if(e)e.value=''; });
+}
+function editCustomer(id){
+  const c=(state.customers||[]).find(x=>x.id===id); if(!c) return;
+  modal(`<div class="mhead"><h2>Edit Customer</h2><button class="x" onclick="openCustomers()">✕</button></div>
+    <div class="mbody">
+      <div class="field"><label>Name</label><input id="ecName" value="${esc(c.name||'')}"/></div>
+      <div class="grid2">
+        <div class="field"><label>Contact</label><input id="ecContact" value="${esc(c.contact||'')}"/></div>
+        <div class="field"><label>Phone</label><input id="ecPhone" value="${esc(c.phone||'')}"/></div>
+      </div>
+      <div class="field"><label>Email</label><input id="ecEmail" value="${esc(c.email||'')}"/></div>
+      <div class="field"><label>Billing address</label><textarea id="ecAddr" rows="2">${esc(c.billing_address||'')}</textarea></div>
+      <div class="grid2">
+        <div class="field"><label>Payment terms</label><input id="ecTerms" value="${esc(c.terms||'')}"/></div>
+        <div class="field"><label>Notes</label><input id="ecNotes" value="${esc(c.notes||'')}"/></div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn warn" onclick="delCustomer('${c.id}')">Delete</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="openCustomers()">Back</button>
+        <button class="btn primary" onclick="saveCustomer('${c.id}')">Save</button>
+      </div>
+    </div>`);
+}
+async function saveCustomer(id){
+  const rec={ name:el('ecName').value.trim(), contact:el('ecContact').value.trim()||null, phone:el('ecPhone').value.trim()||null,
+    email:el('ecEmail').value.trim()||null, billing_address:el('ecAddr').value.trim()||null,
+    terms:el('ecTerms').value.trim()||null, notes:el('ecNotes').value.trim()||null };
+  if(!rec.name){ toast('Name required'); return; }
+  const {error}=await sb.from('customers').update(rec).eq('id',id);
+  if(error){ toast('Save failed: '+error.message); return; }
+  const {data}=await sb.from('customers').select('*').order('name'); state.customers=data||[];
+  toast('Customer updated'); renderSales(); openCustomers();
+}
+async function delCustomer(id){
+  if(!confirm('Remove customer?'))return;
+  const {data:c}=await sb.from('customers').select('*').eq('id',id).maybeSingle();
+  await sb.from('customers').delete().eq('id',id);
+  const {data}=await sb.from('customers').select('*').order('name'); state.customers=data||[];
+  renderCustList(); renderSales();
+  undoToast('Customer removed', async ()=>{ if(c) await sb.from('customers').insert(c);
+    const {data}=await sb.from('customers').select('*').order('name'); state.customers=data||[]; renderCustList(); });
+}
+
+/* ---- global search hooks ---- */
+function gsOpenSO(id){ closeGlobalResults(); setTab('sales'); viewSalesOrder(id); }
+function gsOpenCustomer(id){ closeGlobalResults(); openCustomers(); editCustomer(id); }
 
 /* ====================== AUTH / BOOT ====================== */
 async function signIn(){
