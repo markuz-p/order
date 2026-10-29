@@ -500,6 +500,7 @@ body.dark .tr-fill{background:var(--amber)}
             <button onclick="pickNew('po')"><span class="ico">📋</span> Purchase Order</button>
             <button onclick="pickNew('so')"><span class="ico">💼</span> Sales Order</button>
             <button onclick="pickNew('inv')"><span class="ico">🧾</span> Invoice</button>
+            <button onclick="pickNew('bill')"><span class="ico">📑</span> Vendor Bill</button>
             <button onclick="pickNew('cust')"><span class="ico">👤</span> Customer</button>
           </div>
         </div>
@@ -521,6 +522,7 @@ body.dark .tr-fill{background:var(--amber)}
       <button class="tab" data-tab="orders" onclick="setTab('orders')"><span class="ico">📋</span> Orders</button>
       <button class="tab" data-tab="sales" onclick="setTab('sales')"><span class="ico">💼</span> Sales Orders</button>
       <button class="tab" data-tab="invoices" onclick="setTab('invoices')"><span class="ico">🧾</span> Invoices</button>
+      <button class="tab" data-tab="bills" onclick="setTab('bills')"><span class="ico">📑</span> Bills</button>
       <button class="tab" data-tab="parts" onclick="setTab('parts')"><span class="ico">🔩</span> Parts</button>
       <button class="tab" data-tab="packing" onclick="setTab('packing')"><span class="ico">📦</span> Packing Slips</button>
       <button class="tab" data-tab="billing" onclick="setTab('billing')"><span class="ico">💲</span> Billing</button>
@@ -606,6 +608,31 @@ body.dark .tr-fill{background:var(--amber)}
         <div class="empty hide" id="invEmpty">
           <h3>No invoices yet</h3><p>Bill a customer by creating an invoice — or make one straight from a sales order.</p>
           <button class="btn primary" onclick="openInvoice()">＋ New Invoice</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- BILLS TAB -->
+    <section id="tab-bills" class="hide">
+      <div class="rail" id="billRail"></div>
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          <input id="billSearch" placeholder="Search bills — vendor, bill#, PO…" oninput="renderBills()" />
+        </div>
+        <button class="pill amber" onclick="openBill()" style="color:#3a2800">＋ New Bill</button>
+      </div>
+      <div class="panel">
+        <table>
+          <thead><tr>
+            <th>Bill #</th><th>Vendor</th><th>PO</th><th>Total</th><th>Balance</th><th>Status</th><th>Due</th><th>Updated</th>
+          </tr></thead>
+          <tbody id="billBody"></tbody>
+        </table>
+        <div class="cards" id="billCards"></div>
+        <div class="empty hide" id="billEmpty">
+          <h3>No vendor bills yet</h3><p>Record what you owe a supplier — or make a bill straight from a purchase order.</p>
+          <button class="btn primary" onclick="openBill()">＋ New Bill</button>
         </div>
       </div>
     </section>
@@ -754,7 +781,7 @@ const LOGO_SVG = `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><r
 
 /* ---------- State ---------- */
 let sb = null;
-let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], customers:[], salesOrders:[], invoices:[], tab:'home', filter:'all', soFilter:'all', invFilter:'all', rmaFilter:'open', editing:null, editingPart:null, editingSO:null, editingInv:null, lineItems:[], soLineItems:[], invLineItems:[] };
+let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], customers:[], salesOrders:[], invoices:[], bills:[], tab:'home', filter:'all', soFilter:'all', invFilter:'all', billFilter:'all', rmaFilter:'open', editing:null, editingPart:null, editingSO:null, editingInv:null, editingBill:null, lineItems:[], soLineItems:[], invLineItems:[], billLineItems:[] };
 
 /* ---------- Helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -867,13 +894,14 @@ async function loadAll(){
   render();                        // board paints now
   // Wave 2 — everything else, loaded in the background
   state.loading2 = true;
-  const [slp,prt,rma,cus,so,inv] = await Promise.all([
+  const [slp,prt,rma,cus,so,inv,bl] = await Promise.all([
     sb.from('packing_slips').select('*, order:orders(po_number)').order('date_received',{ascending:false}),
     sb.from('parts').select('*, supplier:suppliers(name)').order('description'),
     sb.from('rmas').select('*, supplier:suppliers(name), order:orders(po_number)').order('created_at',{ascending:false}),
     sb.from('customers').select('*').order('name'),
     sb.from('sales_orders').select('*, customer:customers(name), build:builds(name), items:sales_order_items(*)').order('updated_at',{ascending:false}),
     sb.from('invoices').select('*, customer:customers(name), build:builds(name), items:invoice_items(*), payments:payments(*)').order('updated_at',{ascending:false}),
+    sb.from('bills').select('*, supplier:suppliers(name), order:orders(po_number), build:builds(name), items:bill_items(*), payments:bill_payments(*)').order('updated_at',{ascending:false}),
   ]);
   for(const r of [slp,prt]){ if(r.error){ console.error(r.error); } }
   state.slips = slp.data||[]; state.parts = prt.data||[];
@@ -881,6 +909,7 @@ async function loadAll(){
   state.customers = (cus&&!cus.error) ? (cus.data||[]) : [];       // sales add-on may not be run yet
   state.salesOrders = (so&&!so.error) ? (so.data||[]) : [];
   state.invoices = (inv&&!inv.error) ? (inv.data||[]) : [];       // invoices add-on may not be run yet
+  state.bills = (bl&&!bl.error) ? (bl.data||[]) : [];             // vendor-bills add-on may not be run yet
   state.loading2 = false;
   render();                        // fills parts / slips / trends / RMAs
   el('syncDot').classList.add('on'); el('syncTxt').textContent='Synced';
@@ -946,7 +975,7 @@ function render(){
         </div></div>`;
     }).join('');
   }
-  renderSlips(); renderBilling(); renderParts(); renderTrends(); renderRMAs(); renderSales(); renderInvoices(); renderHome();
+  renderSlips(); renderBilling(); renderParts(); renderTrends(); renderRMAs(); renderSales(); renderInvoices(); renderBills(); renderHome();
 }
 
 /* ---------- Render: packing slips ---------- */
@@ -1177,7 +1206,7 @@ function handleDeepLink(){
 
 function setTab(t){ state.tab=t;
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
-  ['home','orders','sales','invoices','parts','packing','billing','trends','rmas'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
+  ['home','orders','sales','invoices','bills','parts','packing','billing','trends','rmas'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
 }
 function setFilter(k){ state.filter = state.filter===k?'all':k; render(); }
 
@@ -1895,6 +1924,7 @@ function viewOrder(id){
         <button class="btn sub" onclick="downloadRFQ('${o.id}')"><span class="ico">📨</span> RFQ</button>
         <button class="btn sub" onclick="openQuoteDoc('${o.id}')"><span class="ico">🧾</span> Quote</button>
         <button class="btn sub" onclick="reorderOrder('${o.id}')" title="Start a new order from this one">⧉ Reorder</button>
+        <button class="btn sub" onclick="billFromPO('${o.id}')" title="Record the vendor's bill for this PO">📑 Record Bill</button>
       </div>
       <div style="display:flex;gap:8px">
         ${next?`<button class="btn ok" onclick="advance('${o.id}','${next.key}')">→ ${next.label}</button>`:''}
@@ -3039,7 +3069,7 @@ function buildQuote(id, opts){
 /* ---- "+ New" header dropdown ---- */
 function toggleNewMenu(e){ if(e) e.stopPropagation(); const m=el('newMenu'); if(m) m.classList.toggle('show'); }
 function pickNew(kind){ const m=el('newMenu'); if(m) m.classList.remove('show');
-  if(kind==='po') openOrder(); else if(kind==='so') openSalesOrder(); else if(kind==='inv') openInvoice(); else if(kind==='cust') openCustomers(); }
+  if(kind==='po') openOrder(); else if(kind==='so') openSalesOrder(); else if(kind==='inv') openInvoice(); else if(kind==='bill') openBill(); else if(kind==='cust') openCustomers(); }
 document.addEventListener('click',function(e){
   const m=el('newMenu'); if(!m||!m.classList.contains('show')) return;
   if(e.target.closest('#newBtn')) return;
@@ -3776,6 +3806,290 @@ function buildInvoicePdf(id){
   return { doc, v, filename:`Invoice_${(v.invoice_number||v.id.slice(0,6)).replace(/[^\w.\-]/g,'_')}.pdf` };
 }
 
+/* ====================== VENDOR BILLS & PAYMENTS (A/P, Phase 4) ====================== */
+const BILL_STAGES = [
+  {key:'draft',   label:'Draft',   sub:'Not entered', varc:'--s-needed'},
+  {key:'open',    label:'Open',    sub:'Owed',        varc:'--s-submitted'},
+  {key:'partial', label:'Partial', sub:'Part paid',   varc:'--s-awaiting'},
+  {key:'overdue', label:'Overdue', sub:'Past due',    varc:'--s-cancelled'},
+  {key:'paid',    label:'Paid',    sub:'Settled',     varc:'--s-received'},
+];
+let _billSeedPO=null;
+function billSubtotal(b){ return (b.items||[]).reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.unit_price)||0),0); }
+function billTotal(b){ return (b.total!=null&&b.total!=='')?Number(b.total):billSubtotal(b)+(Number(b.tax)||0)+(Number(b.shipping)||0); }
+function billPaid(b){ return (b.payments||[]).reduce((a,p)=>a+(Number(p.amount)||0),0); }
+function billBalance(b){ return billTotal(b)-billPaid(b); }
+function billStatus(b){
+  if(b.status==='void')  return {key:'void', label:'Void',  varc:'--s-cancelled'};
+  if(b.status==='draft') return {key:'draft',label:'Draft', varc:'--s-needed'};
+  const bal=billBalance(b), paid=billPaid(b), tot=billTotal(b);
+  if(tot>0 && bal<=0.004)                 return {key:'paid',   label:'Paid',    varc:'--s-received'};
+  if(paid>0)                              return {key:'partial',label:'Partial', varc:'--s-awaiting'};
+  if(b.due_date && b.due_date<today())    return {key:'overdue',label:'Overdue', varc:'--s-cancelled'};
+  return {key:'open', label:'Open', varc:'--s-submitted'};
+}
+function apOutstanding(){ return (state.bills||[]).filter(b=>{const k=billStatus(b).key;return k!=='void'&&k!=='draft'&&k!=='paid';}).reduce((a,b)=>a+billBalance(b),0); }
+function apOverdue(){ return (state.bills||[]).filter(b=>billStatus(b).key==='overdue').reduce((a,b)=>a+billBalance(b),0); }
+function billLabel(b){ return b.bill_number || ((b.supplier?.name||'Bill')+(b.bill_date?' '+b.bill_date:'')); }
+
+function filteredBills(){
+  const q=(el('billSearch')?.value||'').toLowerCase().trim();
+  return (state.bills||[]).filter(b=>{
+    if(state.billFilter!=='all' && billStatus(b).key!==state.billFilter) return false;
+    if(!q) return true;
+    const hay=[b.bill_number,b.supplier?.name,b.order?.po_number,b.build?.name,b.notes,...(b.items||[]).flatMap(i=>[i.sku,i.description])].join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+}
+function setBillFilter(k){ state.billFilter=state.billFilter===k?'all':k; renderBills(); }
+function renderBills(){
+  const rail=el('billRail'); if(!rail) return;
+  rail.innerHTML = BILL_STAGES.map(st=>{
+    const c=(state.bills||[]).filter(b=>billStatus(b).key===st.key).length;
+    const sel=state.billFilter===st.key?' sel':'';
+    return `<button class="stage${sel}" style="--sc:var(${st.varc})" onclick="setBillFilter('${st.key}')">
+      <span class="dotc"></span><div class="n">${c}</div><div class="lb">${st.label}</div><div class="sb">${st.sub}</div></button>`;
+  }).join('');
+  const body=el('billBody'), cards=el('billCards');
+  if(state.loading2 && !(state.bills||[]).length){
+    el('billEmpty').classList.add('hide');
+    body.innerHTML='<tr><td colspan="8" class="sub" style="text-align:center;padding:30px">Loading bills…</td></tr>';
+    cards.innerHTML='<div class="sub" style="text-align:center;padding:30px">Loading…</div>'; return;
+  }
+  el('billEmpty').classList.toggle('hide', (state.bills||[]).length>0);
+  const list=filteredBills();
+  if(!list.length){ body.innerHTML=''; cards.innerHTML=''; return; }
+  body.innerHTML=list.map(b=>{ const st=billStatus(b), bal=billBalance(b);
+    return `<tr onclick="viewBill('${b.id}')">
+      <td class="po mono">${esc(b.bill_number||'—')}</td>
+      <td>${esc(b.supplier?.name||'—')}</td>
+      <td class="mono sub">${esc(b.order?.po_number||'—')}</td>
+      <td class="mono">${money0(billTotal(b))}</td>
+      <td class="mono">${bal>0.004?money0(bal):'<span class=sub>—</span>'}</td>
+      <td><span class="badge" style="--sc:var(${st.varc})">${st.label}</span></td>
+      <td>${b.due_date?fmtDate(b.due_date):'—'}</td>
+      <td class="sub">${timeAgo(b.updated_at)}</td></tr>`;
+  }).join('');
+  cards.innerHTML=list.map(b=>{ const st=billStatus(b), bal=billBalance(b);
+    return `<div class="ocard" onclick="viewBill('${b.id}')">
+      <div class="top"><div><div class="po mono">${esc(b.bill_number||'(no #)')}</div>
+        <div class="sub">${esc(b.supplier?.name||'—')}${b.order?.po_number?' · '+esc(b.order.po_number):''}</div></div>
+        <span class="badge" style="--sc:var(${st.varc})">${st.label}</span></div>
+      <div class="meta"><span>Total <strong class="mono">${money0(billTotal(b))}</strong></span>
+        <span>Balance <strong class="mono">${bal>0.004?money0(bal):'$0'}</strong></span>
+        <span>${b.due_date?'Due '+fmtDate(b.due_date):'No due date'}</span></div></div>`;
+  }).join('');
+}
+
+/* ---- Bill editor ---- */
+function openBill(b=null, seed=null){
+  state.editingBill=b;
+  const src=b||seed;
+  _billSeedPO = (!b && seed) ? (seed.order_id||null) : (b?b.order_id:null);
+  state.billLineItems = src ? (src.items||[]).map(i=>({sku:i.sku||'',description:i.description||'',qty:i.qty||1,unit_price:i.unit_price||0}))
+                            : [{sku:'',description:'',qty:1,unit_price:0}];
+  const selSup=b?b.supplier_id:(seed?seed.supplier_id:'');
+  const selBld=b?b.build_id:(seed?seed.build_id:'');
+  const supOpts=(state.suppliers||[]).map(x=>`<option value="${x.id}" ${selSup===x.id?'selected':''}>${esc(x.name)}</option>`).join('');
+  const bldOpts=state.builds.map(x=>`<option value="${x.id}" ${selBld===x.id?'selected':''}>${esc(x.name)}</option>`).join('');
+  const baseStatus=b?b.status:'open';
+  const stOpts=[['draft','Draft'],['open','Open'],['void','Void']].map(x=>`<option value="${x[0]}" ${baseStatus===x[0]?'selected':''}>${x[1]}</option>`).join('');
+  const termOpts=INV_TERMS.map(t=>`<option ${b&&b.terms===t?'selected':(!b&&t==='Net 30'?'selected':'')}>${t}</option>`).join('');
+  const poRef = _billSeedPO ? ((state.orders||[]).find(o=>o.id===_billSeedPO)?.po_number||'') : '';
+  modal(`
+    <div class="mhead"><h2>${b?'Edit Bill':'New Vendor Bill'}</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      ${poRef?`<p class="sub" style="margin-top:0">From PO <strong class="mono">${esc(poRef)}</strong></p>`:''}
+      <div class="grid2">
+        <div class="field"><label>Vendor <span class="req">*</span> <button class="linkbtn" style="float:right;font-size:11px" onclick="openSuppliers()">＋ New vendor</button></label>
+          <select id="blSupplier"><option value="">— Select —</option>${supOpts}</select></div>
+        <div class="field"><label>Unit / Build</label><select id="blBuild"><option value="">— None —</option>${bldOpts}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Status</label><select id="blStatus">${stOpts}</select></div>
+        <div class="field"><label>Vendor's bill / invoice #</label><input id="blNumber" value="${esc(b?.bill_number||'')}" placeholder="their invoice number"/></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Bill Date</label><input id="blDate" type="date" value="${b?.bill_date||today()}" onchange="billApplyTerms()"/></div>
+        <div class="field"><label>Terms</label><select id="blTerms" onchange="billApplyTerms()">${termOpts}</select></div>
+      </div>
+      <div class="field"><label>Due Date</label><input id="blDue" type="date" value="${b?.due_date||''}"/></div>
+
+      <div class="section-lb">Items <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">optional — or just set a total below</span> <span><button class="linkbtn" onclick="billAddLine()">＋ Blank Row</button></span></div>
+      <div class="li-head"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Total</span><span></span></div>
+      <div id="billLineItems"></div>
+
+      <div class="grid2" style="margin-top:12px">
+        <div class="field"><label>Tax ($)</label><input id="blTax" type="number" step="0.01" value="${b?.tax||''}" oninput="updateBillTotal()"/></div>
+        <div class="field"><label>Shipping ($)</label><input id="blShip" type="number" step="0.01" value="${b?.shipping||''}" oninput="updateBillTotal()"/></div>
+      </div>
+      <div class="field"><label>Total ($) <span class="sub" style="text-transform:none;letter-spacing:0;font-family:Inter">— leave blank to use items + tax + shipping</span></label><input id="blTotalOverride" type="number" step="0.01" value="${b&&b.total!=null?b.total:''}" placeholder="auto" oninput="updateBillTotal()"/></div>
+      <div class="li-total">Computed: <strong class="mono" id="blComputed">$0.00</strong></div>
+
+      <div class="field" style="margin-top:12px"><label>Notes</label><textarea id="blNotes">${esc(b?.notes||'')}</textarea></div>
+    </div>
+    <div class="mfoot">
+      <div>${b?`<button class="btn warn" onclick="deleteBill('${b.id}')">Delete</button>`:''}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" onclick="saveBill()">${b?'Save changes':'Record bill'}</button>
+      </div>
+    </div>`);
+  renderBillLines();
+  if(!b) billApplyTerms();
+  if(!b) setTimeout(()=>el('blSupplier')?.focus(),60);
+}
+function billApplyTerms(){
+  const terms=el('blTerms')?.value, base=el('blDate')?.value; if(!terms||!base) return;
+  const days={'Due on receipt':0,'Net 15':15,'Net 30':30,'Net 45':45,'Net 60':60}[terms]; if(days==null) return;
+  const d=new Date(base+'T00:00:00'); d.setDate(d.getDate()+days);
+  if(el('blDue')) el('blDue').value=d.toISOString().slice(0,10);
+}
+function renderBillLines(){
+  el('billLineItems').innerHTML = state.billLineItems.map((it,i)=>`<div class="li">
+    <input value="${esc(it.sku||'')}" placeholder="SKU" oninput="billSetLine(${i},'sku',this.value)" onkeydown="billLineKey(event,${i})"/>
+    <input value="${esc(it.description||'')}" placeholder="Description" oninput="billSetLine(${i},'description',this.value)" onkeydown="billLineKey(event,${i})"/>
+    <input class="mono" type="number" min="0" title="Qty" placeholder="Qty" value="${it.qty??1}" oninput="billSetLine(${i},'qty',this.value)" onkeydown="billLineKey(event,${i})"/>
+    <input class="mono" type="number" min="0" step="0.01" title="Unit price" placeholder="Unit $" value="${it.unit_price??0}" oninput="billSetLine(${i},'unit_price',this.value)" onkeydown="billLineKey(event,${i})"/>
+    <span class="mono soLineTot" style="align-self:center;text-align:right;font-size:13px">${money((Number(it.qty)||0)*(Number(it.unit_price)||0))}</span>
+    <button class="lidel" onclick="billDelLine(${i})">✕</button></div>`).join('');
+  updateBillTotal();
+}
+function billFocusRow(i){ const rows=el('billLineItems').querySelectorAll('.li'); rows[i]?.querySelector('input')?.focus(); }
+function billAddLine(){ state.billLineItems.push({sku:'',description:'',qty:1,unit_price:0}); renderBillLines(); billFocusRow(state.billLineItems.length-1); }
+function billDelLine(i){ state.billLineItems.splice(i,1); if(!state.billLineItems.length) billAddLine(); else renderBillLines(); }
+function billSetLine(i,k,v){ state.billLineItems[i][k]=(k==='sku'||k==='description')?v:parseFloat(v||0); if(k==='qty'||k==='unit_price') updateBillTotal(); }
+function billLineKey(e,i){ if(e.key!=='Enter')return; e.preventDefault(); if(i>=state.billLineItems.length-1) billAddLine(); else billFocusRow(i+1); }
+function billEditSubtotal(){ return state.billLineItems.reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.unit_price)||0),0); }
+function billComputedTotal(){
+  const ov=el('blTotalOverride')?.value; if(ov!=='' && ov!=null) return parseFloat(ov)||0;
+  return billEditSubtotal()+(Number(el('blTax')?.value)||0)+(Number(el('blShip')?.value)||0);
+}
+function updateBillTotal(){
+  document.querySelectorAll('#billLineItems .li').forEach((row,idx)=>{ const it=state.billLineItems[idx]; if(!it)return;
+    const span=row.querySelector('.soLineTot'); if(span) span.textContent=money((Number(it.qty)||0)*(Number(it.unit_price)||0)); });
+  if(el('blComputed')) el('blComputed').textContent=money(billComputedTotal());
+}
+function saveBill(){
+  const supplier_id=el('blSupplier').value;
+  if(!supplier_id){ toast('Pick a vendor first'); return; }
+  const ov=el('blTotalOverride').value;
+  const total = ov!=='' ? (parseFloat(ov)||0) : (billEditSubtotal()+(el('blTax').value?parseFloat(el('blTax').value):0)+(el('blShip').value?parseFloat(el('blShip').value):0));
+  const rec={ supplier_id, order_id:_billSeedPO||null, build_id:el('blBuild').value||null,
+    status:el('blStatus').value, bill_number:el('blNumber').value.trim()||null,
+    bill_date:el('blDate').value||null, due_date:el('blDue').value||null, terms:el('blTerms').value||null,
+    tax:el('blTax').value?parseFloat(el('blTax').value):null, shipping:el('blShip').value?parseFloat(el('blShip').value):null,
+    total:total||null, notes:el('blNotes').value.trim()||null, updated_at:new Date().toISOString() };
+  (async()=>{
+    let billId=state.editingBill?.id;
+    if(billId){
+      const {error}=await sb.from('bills').update(rec).eq('id',billId);
+      if(error){ toast(billErr(error)); return; }
+      await sb.from('bill_items').delete().eq('bill_id',billId);
+    } else {
+      const {data,error}=await sb.from('bills').insert(rec).select('id').single();
+      if(error){ toast(billErr(error)); return; }
+      billId=data.id;
+    }
+    const items=state.billLineItems.filter(i=>i.sku||i.description||(Number(i.qty)&&Number(i.unit_price)))
+      .map(i=>({bill_id:billId,sku:i.sku||null,description:i.description||null,qty:Number(i.qty)||0,unit_price:Number(i.unit_price)||0}));
+    if(items.length){ const {error}=await sb.from('bill_items').insert(items); if(error) toast('Items error: '+error.message); }
+    _billSeedPO=null;
+    closeModal(); toast(state.editingBill?'Bill updated':'Bill recorded'); await loadAll();
+  })();
+}
+function billErr(error){ const m=(error&&error.message)||''; if(/relation|does not exist|schema cache|bill/i.test(m)) return 'Run the Vendor Bills add-on SQL in Supabase first'; return 'Save failed: '+m; }
+function billFromPO(orderId){
+  const o=(state.orders||[]).find(x=>x.id===orderId); if(!o){ toast('PO not found'); return; }
+  closeModal();
+  openBill(null, { supplier_id:o.supplier_id, order_id:o.id, build_id:o.build_id,
+    items:(o.items||[]).map(i=>({sku:i.sku,description:i.description,qty:i.qty,unit_price:i.unit_price})) });
+  toast('Bill drafted from PO — add the vendor bill # and due date');
+}
+function viewBill(id){
+  const b=(state.bills||[]).find(x=>x.id===id); if(!b) return;
+  const st=billStatus(b), tot=billTotal(b), paid=billPaid(b), bal=billBalance(b);
+  const itemsHtml=(b.items||[]).length?`
+    <div class="li-head" style="margin-top:6px"><span>SKU</span><span>Description</span><span>Qty</span><span>Unit $</span><span>Total</span><span></span></div>
+    ${b.items.map(i=>`<div class="recv-row">
+      <span class="mono">${esc(i.sku||'—')}</span><span>${esc(i.description||'—')}</span>
+      <span class="mono">${i.qty}</span><span class="mono">${money(i.unit_price)}</span>
+      <span class="mono">${money((Number(i.qty)||0)*(Number(i.unit_price)||0))}</span><span></span></div>`).join('')}`
+    : '<div class="sub">No line items — total entered directly.</div>';
+  const payHtml=(b.payments||[]).length? (b.payments||[]).slice().sort((a,b2)=>(b2.paid_date||'').localeCompare(a.paid_date||'')).map(p=>`
+      <div class="att"><span>${p.paid_date?fmtDate(p.paid_date):'—'}${p.method?' · '+esc(p.method):''}${p.reference?' · '+esc(p.reference):''}</span>
+        <span class="mono">${money(p.amount)}</span></div>`).join('') : '<div class="sub">No payments recorded.</div>';
+  modal(`
+    <div class="mhead"><h2>${esc(b.bill_number||'Vendor Bill')} <span class="badge" style="--sc:var(${st.varc});vertical-align:middle;margin-left:8px">${st.label}</span></h2>
+      <button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mbody">
+      <div class="drow"><span class="k">Vendor</span><span><strong>${esc(b.supplier?.name||'—')}</strong></span></div>
+      ${b.order?.po_number?`<div class="drow"><span class="k">From PO</span><span class="mono">${esc(b.order.po_number)}</span></div>`:''}
+      ${b.build?.name?`<div class="drow"><span class="k">Unit / Build</span><span>${esc(b.build.name)}</span></div>`:''}
+      <div class="drow"><span class="k">Bill date</span><span>${b.bill_date?fmtDate(b.bill_date):'—'}</span></div>
+      <div class="drow"><span class="k">Due date</span><span>${b.due_date?fmtDate(b.due_date):'—'}${b.terms?' <span class="sub">· '+esc(b.terms)+'</span>':''}</span></div>
+      <div class="section-lb">Items</div>
+      ${itemsHtml}
+      <div class="li-total">Total <strong class="mono">${money(tot)}</strong> &nbsp;·&nbsp; Paid <strong class="mono">${money(paid)}</strong> &nbsp;·&nbsp; <span style="color:${bal>0.004?'var(--danger)':'var(--ok)'}">Balance <strong class="mono">${money(bal)}</strong></span></div>
+      <div class="section-lb">Payments <span><button class="linkbtn" onclick="openBillPayment('${b.id}')">＋ Record payment</button></span></div>
+      ${payHtml}
+    </div>
+    <div class="mfoot">
+      <div>${bal>0.004?`<button class="btn ok" onclick="openBillPayment('${b.id}')">＋ Pay</button>`:''}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn sub" onclick="openBill((state.bills||[]).find(x=>x.id==='${b.id}'))">Edit</button>
+        <button class="btn primary" onclick="closeModal()">Done</button>
+      </div>
+    </div>`);
+}
+function openBillPayment(billId){
+  const b=(state.bills||[]).find(x=>x.id===billId); if(!b) return;
+  const bal=billBalance(b);
+  const methods=['Check','ACH','Card','Cash','Other'];
+  modal(`
+    <div class="mhead"><h2>Pay Bill</h2><button class="x" onclick="viewBill('${billId}')">✕</button></div>
+    <div class="mbody">
+      <div class="drow"><span class="k">Bill</span><span><strong>${esc(b.bill_number||'—')}</strong> · ${esc(b.supplier?.name||'')} · balance <span class="mono">${money(bal)}</span></span></div>
+      <div class="grid2">
+        <div class="field"><label>Amount ($) <span class="req">*</span></label><input id="bpayAmt" type="number" step="0.01" value="${bal>0?bal.toFixed(2):''}"/></div>
+        <div class="field"><label>Date</label><input id="bpayDate" type="date" value="${today()}"/></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Method</label><select id="bpayMethod">${methods.map(m=>`<option>${m}</option>`).join('')}</select></div>
+        <div class="field"><label>Reference</label><input id="bpayRef" placeholder="check #, confirmation…"/></div>
+      </div>
+      <div class="field"><label>Notes</label><input id="bpayNotes"/></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn sub" onclick="viewBill('${billId}')">Back</button>
+      <button class="btn primary" onclick="saveBillPayment('${billId}')">Record payment</button>
+    </div>`);
+}
+async function saveBillPayment(billId){
+  const amt=parseFloat(el('bpayAmt').value); if(!amt||amt<=0){ toast('Enter an amount'); return; }
+  const rec={ bill_id:billId, amount:amt, paid_date:el('bpayDate').value||today(),
+    method:el('bpayMethod').value||null, reference:el('bpayRef').value.trim()||null, notes:el('bpayNotes').value.trim()||null };
+  const {error}=await sb.from('bill_payments').insert(rec);
+  if(error){ toast(billErr(error)); return; }
+  const {data}=await sb.from('bills').select('*, supplier:suppliers(name), order:orders(po_number), build:builds(name), items:bill_items(*), payments:bill_payments(*)').order('updated_at',{ascending:false});
+  state.bills=data||[]; render(); toast('Payment recorded'); viewBill(billId);
+}
+async function deleteBill(id){
+  if(!confirm('Delete this bill, its items and payments?\n(You can Undo for a few seconds after.)')) return;
+  const {data:bl}=await sb.from('bills').select('*').eq('id',id).maybeSingle();
+  const {data:items}=await sb.from('bill_items').select('*').eq('bill_id',id);
+  const {data:pays}=await sb.from('bill_payments').select('*').eq('bill_id',id);
+  const {error}=await sb.from('bills').delete().eq('id',id);
+  if(error){ toast('Delete failed: '+error.message); return; }
+  closeModal(); await loadAll();
+  undoToast('Bill deleted', async ()=>{
+    if(bl) await sb.from('bills').insert(bl);
+    if(items&&items.length) await sb.from('bill_items').insert(items);
+    if(pays&&pays.length) await sb.from('bill_payments').insert(pays);
+    await loadAll();
+  });
+}
+
 /* ====================== HOME / DASHBOARD (Role Center) ====================== */
 function openPoList(){ setTab('orders'); }
 function renderHome(){
@@ -3789,6 +4103,9 @@ function renderHome(){
   const outstanding=arOutstanding(), overdue=arOverdue();
   const overdueInv=(state.invoices||[]).filter(i=>invStatus(i).key==='overdue');
   const low=lowStockParts();
+  const apOut=apOutstanding(), apOver=apOverdue();
+  const billsDue=(state.bills||[]).filter(b=>{const k=billStatus(b).key;return k==='overdue'||k==='open'||k==='partial';})
+      .sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999'));
   const thisMonth=today().slice(0,7);
   const collected=(state.invoices||[]).flatMap(i=>i.payments||[]).filter(p=>(p.paid_date||'').slice(0,7)===thisMonth).reduce((a,p)=>a+(Number(p.amount)||0),0);
 
@@ -3835,6 +4152,8 @@ function renderHome(){
       ${tile('A/R Outstanding', money0(outstanding), 'Owed to you', 'invoices')}
       ${tile('Overdue', money0(overdue), overdueInv.length+' invoice'+(overdueInv.length===1?'':'s'), 'invoices')}
       ${tile('Collected this month', money0(collected), thisMonth, 'invoices')}
+      ${tile('A/P Outstanding', money0(apOut), 'You owe vendors', 'bills')}
+      ${tile('A/R − A/P', money0(outstanding-apOut), 'Net receivable', null)}
       ${tile('Open Sales', money0(openSOval), openSO.length+' sales order'+(openSO.length===1?'':'s'), 'sales')}
       ${tile('Open POs', money0(openPOval), openPOs.length+' order'+(openPOs.length===1?'':'s'), 'orders')}
       ${tile('To Receive', String(toReceive.length), 'POs inbound', 'orders')}
@@ -3846,6 +4165,9 @@ function renderHome(){
       ${attn('📦 POs to receive', receiveRows)}
       ${attn('🏗 Units in production', prodRows)}
       ${attn('🔻 Low stock', lowRows)}
+      ${attn('📑 Bills to pay', billsDue.slice(0,6).map(b=>`<div class="att" style="cursor:pointer" onclick="viewBill('${b.id}')">
+        <span><strong>${esc(b.bill_number||b.supplier?.name||'Bill')}</strong>${b.supplier?.name&&b.bill_number?' · '+esc(b.supplier.name):''}${b.due_date?' <span class="sub">due '+fmtDate(b.due_date)+'</span>':''}</span>
+        <span class="mono" style="color:${billStatus(b).key==='overdue'?'var(--danger)':'var(--ink)'}">${money0(billBalance(b))}</span></div>`))}
       ${jobRows?`<div class="panel" style="padding:12px"><div class="section-lb" style="margin:0 0 8px;padding-top:0;border-top:none">💰 Job costing by unit <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0">billed · profit — tap for detail</span></div>${jobRows}</div>`:''}
     </div>`;
 }
