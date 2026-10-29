@@ -348,6 +348,11 @@ body.dark .tr-fill{background:var(--amber)}
 .kpi-grid .bcard .amt{font-size:24px;margin:4px 0 2px}
 .hometile:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(16,32,55,.10)}
 .cost3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.areabar .tab{font-size:14px}
+.subtabs{background:transparent;padding:3px 0;margin:4px 0 18px;gap:5px}
+.subtabs .tab{background:var(--bg);border:1px solid var(--line)}
+.subtabs .tab.active{background:var(--surface);border-color:var(--brand);color:var(--ink);box-shadow:var(--shadow)}
+body.dark .subtabs .tab{background:#14202f}
 @media(max-width:860px){ .kpi-grid{grid-template-columns:repeat(2,1fr)} .cost3{grid-template-columns:1fr} }
 
 @media(max-width:860px){
@@ -517,18 +522,8 @@ body.dark .tr-fill{background:var(--amber)}
       </div>
       <div id="globalResults" class="gs-results hide"></div>
     </div>
-    <div class="tabs">
-      <button class="tab active" data-tab="home" onclick="setTab('home')"><span class="ico">🏠</span> Home</button>
-      <button class="tab" data-tab="orders" onclick="setTab('orders')"><span class="ico">📋</span> Orders</button>
-      <button class="tab" data-tab="sales" onclick="setTab('sales')"><span class="ico">💼</span> Sales Orders</button>
-      <button class="tab" data-tab="invoices" onclick="setTab('invoices')"><span class="ico">🧾</span> Invoices</button>
-      <button class="tab" data-tab="bills" onclick="setTab('bills')"><span class="ico">📑</span> Bills</button>
-      <button class="tab" data-tab="parts" onclick="setTab('parts')"><span class="ico">🔩</span> Parts</button>
-      <button class="tab" data-tab="packing" onclick="setTab('packing')"><span class="ico">📦</span> Packing Slips</button>
-      <button class="tab" data-tab="billing" onclick="setTab('billing')"><span class="ico">💲</span> Billing</button>
-      <button class="tab" data-tab="trends" onclick="setTab('trends')"><span class="ico">📊</span> Trends</button>
-      <button class="tab" data-tab="rmas" onclick="setTab('rmas')"><span class="ico">↩</span> RMAs</button>
-    </div>
+    <div class="tabs areabar" id="areaBar"></div>
+    <div class="tabs subtabs hide" id="subTabs"></div>
 
     <!-- HOME / DASHBOARD -->
     <section id="tab-home">
@@ -642,12 +637,12 @@ body.dark .tr-fill{background:var(--amber)}
       <div class="toolbar">
         <div class="search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
-          <input id="partSearch" placeholder="Search parts by name, SKU, category…" oninput="renderParts()" />
+          <input id="partSearch" placeholder="Search items by name, SKU, category…" oninput="renderParts()" />
         </div>
         <button class="pill amber" onclick="openScan()" style="color:#3a2800" title="Scan part labels with your camera"><span class="ico">📷</span> Scan</button>
         <button class="pill ghost" onclick="openReorderList()" style="color:var(--ink)" title="Parts at or below their reorder point">⚠ Reorder <span id="reorderCount"></span></button>
         <button class="pill ghost" onclick="openBulkParts()" style="color:var(--ink)">⇪ Bulk Add</button>
-        <button class="pill ghost" onclick="openPart()" style="color:var(--ink)">＋ Add Part</button>
+        <button class="pill ghost" onclick="openPart()" style="color:var(--ink)">＋ Add Item</button>
       </div>
       <div id="partLineChips" style="display:flex;gap:8px;margin:-6px 0 14px">
         <button class="fchip on" data-ln="all" onclick="setPartLine('all')">All</button>
@@ -657,28 +652,24 @@ body.dark .tr-fill{background:var(--amber)}
       </div>
       <div class="parts-grid" id="partsGrid"></div>
       <div class="empty hide" id="partsEmpty">
-        <h3>No parts yet</h3><p>Add your parts with photos, then pick them when building an order.</p>
-        <button class="btn primary" onclick="openPart()">＋ Add Part</button>
+        <h3>No items yet</h3><p>Add your items with photos, then pick them when building an order or a BOM.</p>
+        <button class="btn primary" onclick="openPart()">＋ Add Item</button>
       </div>
     </section>
 
-    <!-- PACKING TAB -->
-    <section id="tab-packing" class="hide">
+    <!-- PRODUCTION BOM TAB -->
+    <section id="tab-bom" class="hide">
       <div class="toolbar">
-        <div style="margin-right:auto">
-          <div class="sig" style="font-size:16px">Packing Slips</div>
-          <div class="sub">Verify received items against orders</div>
+        <div class="chip-filter" id="bomLineChips">
+          <button class="fchip on" data-bl="RP-90" onclick="setBomLine('RP-90')">RP-90</button>
+          <button class="fchip" data-bl="AEV" onclick="setBomLine('AEV')">AEV</button>
+          <button class="fchip" data-bl="Common" onclick="setBomLine('Common')">Common</button>
         </div>
-        <button class="pill amber" onclick="openSlip()">＋ Add Packing Slip</button>
+        <div style="margin-left:auto" class="sub">Standard parts to build one unit of this line</div>
       </div>
-      <div class="panel">
-        <table>
-          <thead><tr><th>Slip #</th><th>Linked PO</th><th>Supplier</th><th>Received</th><th>Notes</th></tr></thead>
-          <tbody id="slipsBody"></tbody>
-        </table>
-        <div class="empty hide" id="slipsEmpty"><h3>No packing slips</h3><p>Add a slip when a shipment arrives.</p></div>
-      </div>
+      <div id="bomPanel"></div>
     </section>
+
 
     <!-- BILLING TAB -->
     <section id="tab-billing" class="hide">
@@ -781,7 +772,7 @@ const LOGO_SVG = `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><r
 
 /* ---------- State ---------- */
 let sb = null;
-let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], customers:[], salesOrders:[], invoices:[], bills:[], tab:'home', filter:'all', soFilter:'all', invFilter:'all', billFilter:'all', rmaFilter:'open', editing:null, editingPart:null, editingSO:null, editingInv:null, editingBill:null, lineItems:[], soLineItems:[], invLineItems:[], billLineItems:[] };
+let state = { suppliers:[], builds:[], orders:[], slips:[], parts:[], rmas:[], customers:[], salesOrders:[], invoices:[], bills:[], bomItems:[], tab:'home', area:'home', bomLine:'RP-90', filter:'all', soFilter:'all', invFilter:'all', billFilter:'all', rmaFilter:'open', editing:null, editingPart:null, editingSO:null, editingInv:null, editingBill:null, lineItems:[], soLineItems:[], invLineItems:[], billLineItems:[] };
 
 /* ---------- Helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -894,7 +885,7 @@ async function loadAll(){
   render();                        // board paints now
   // Wave 2 — everything else, loaded in the background
   state.loading2 = true;
-  const [slp,prt,rma,cus,so,inv,bl] = await Promise.all([
+  const [slp,prt,rma,cus,so,inv,bl,bom] = await Promise.all([
     sb.from('packing_slips').select('*, order:orders(po_number)').order('date_received',{ascending:false}),
     sb.from('parts').select('*, supplier:suppliers(name)').order('description'),
     sb.from('rmas').select('*, supplier:suppliers(name), order:orders(po_number)').order('created_at',{ascending:false}),
@@ -902,6 +893,7 @@ async function loadAll(){
     sb.from('sales_orders').select('*, customer:customers(name), build:builds(name), items:sales_order_items(*)').order('updated_at',{ascending:false}),
     sb.from('invoices').select('*, customer:customers(name), build:builds(name), items:invoice_items(*), payments:payments(*)').order('updated_at',{ascending:false}),
     sb.from('bills').select('*, supplier:suppliers(name), order:orders(po_number), build:builds(name), items:bill_items(*), payments:bill_payments(*)').order('updated_at',{ascending:false}),
+    sb.from('bom_items').select('*').order('sort'),
   ]);
   for(const r of [slp,prt]){ if(r.error){ console.error(r.error); } }
   state.slips = slp.data||[]; state.parts = prt.data||[];
@@ -910,6 +902,7 @@ async function loadAll(){
   state.salesOrders = (so&&!so.error) ? (so.data||[]) : [];
   state.invoices = (inv&&!inv.error) ? (inv.data||[]) : [];       // invoices add-on may not be run yet
   state.bills = (bl&&!bl.error) ? (bl.data||[]) : [];             // vendor-bills add-on may not be run yet
+  state.bomItems = (bom&&!bom.error) ? (bom.data||[]) : [];       // BOM add-on may not be run yet
   state.loading2 = false;
   render();                        // fills parts / slips / trends / RMAs
   el('syncDot').classList.add('on'); el('syncTxt').textContent='Synced';
@@ -975,7 +968,7 @@ function render(){
         </div></div>`;
     }).join('');
   }
-  renderSlips(); renderBilling(); renderParts(); renderTrends(); renderRMAs(); renderSales(); renderInvoices(); renderBills(); renderHome();
+  renderBilling(); renderParts(); renderTrends(); renderRMAs(); renderSales(); renderInvoices(); renderBills(); renderHome(); renderBom(); renderNav();
 }
 
 /* ---------- Render: packing slips ---------- */
@@ -1204,9 +1197,36 @@ function handleDeepLink(){
   else if(kind==='unit'){ const b=state.builds.find(x=>x.id===id); if(b){ setTab('orders'); const s=el('searchBox'); if(s) s.value=b.name; render(); } else toast('That unit wasn\'t found'); }
 }
 
-function setTab(t){ state.tab=t;
-  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
-  ['home','orders','sales','invoices','bills','parts','packing','billing','trends','rmas'].forEach(x=>el('tab-'+x).classList.toggle('hide',x!==t));
+const AREAS=[
+  {key:'home',      label:'Home',       ico:'🏠', tabs:[{t:'home',label:'Dashboard',ico:'🏠'}]},
+  {key:'sales',     label:'Sales',      ico:'💼', tabs:[{t:'sales',label:'Sales Orders',ico:'💼'},{t:'invoices',label:'Invoices',ico:'🧾'}]},
+  {key:'purchasing',label:'Purchasing', ico:'📋', tabs:[{t:'orders',label:'Purchase Orders',ico:'📋'},{t:'bills',label:'Bills',ico:'📑'},{t:'rmas',label:'RMAs',ico:'↩'}]},
+  {key:'inventory', label:'Inventory',  ico:'📦', tabs:[{t:'parts',label:'Items',ico:'🔩'},{t:'bom',label:'Production BOM',ico:'🧩'}]},
+  {key:'finance',   label:'Finance',    ico:'💲', tabs:[{t:'billing',label:'Billing',ico:'💲'},{t:'trends',label:'Trends',ico:'📊'}]},
+];
+const ALL_TABS=['home','orders','sales','invoices','bills','parts','bom','billing','trends','rmas'];
+function areaForTab(t){ return AREAS.find(a=>a.tabs.some(x=>x.t===t)); }
+function setTab(t){
+  state.tab=t;
+  const a=areaForTab(t); if(a) state.area=a.key;
+  ALL_TABS.forEach(x=>{ const s=el('tab-'+x); if(s) s.classList.toggle('hide',x!==t); });
+  renderNav();
+}
+function setArea(key){
+  const a=AREAS.find(x=>x.key===key); if(!a) return;
+  if(a.tabs.some(x=>x.t===state.tab)){ state.area=key; renderNav(); }
+  else setTab(a.tabs[0].t);
+}
+function renderNav(){
+  const ab=el('areaBar');
+  if(ab) ab.innerHTML=AREAS.map(a=>`<button class="tab${state.area===a.key?' active':''}" onclick="setArea('${a.key}')"><span class="ico">${a.ico}</span> ${a.label}</button>`).join('');
+  const st=el('subTabs'); const area=AREAS.find(a=>a.key===state.area);
+  if(st){
+    if(area && area.tabs.length>1){
+      st.classList.remove('hide');
+      st.innerHTML=area.tabs.map(x=>`<button class="tab${state.tab===x.t?' active':''}" onclick="setTab('${x.t}')"><span class="ico">${x.ico}</span> ${x.label}</button>`).join('');
+    } else { st.classList.add('hide'); st.innerHTML=''; }
+  }
 }
 function setFilter(k){ state.filter = state.filter===k?'all':k; render(); }
 
@@ -1388,7 +1408,7 @@ function openPart(p=null){
   const supOpts = state.suppliers.map(s=>`<option value="${s.id}" ${p&&p.supplier_id===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
   const cats = [...new Set(state.parts.map(x=>x.category).filter(Boolean))];
   modal(`
-    <div class="mhead"><h2>${p?'Edit Part':'New Part'}</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mhead"><h2>${p?'Edit Item':'New Item'}</h2><button class="x" onclick="closeModal()">✕</button></div>
     <div class="mbody">
       <div class="field"><label>Photo</label>
         <div class="photobox">
@@ -1664,7 +1684,7 @@ function parseBulk(text){
 }
 function openBulkParts(){
   modal(`
-    <div class="mhead"><h2>Bulk Add Parts</h2><button class="x" onclick="closeModal()">✕</button></div>
+    <div class="mhead"><h2>Bulk Add Items</h2><button class="x" onclick="closeModal()">✕</button></div>
     <div class="mbody">
       <div class="section-lb" style="border-top:none;padding-top:0;margin-top:0">Step 1 · Paste part info</div>
       <p class="sub" style="margin-top:0">In your spreadsheet, put columns in this order, then copy the rows and paste below:</p>
@@ -4211,6 +4231,69 @@ function openUnitCosting(buildId){
     <div class="mfoot"><span></span><button class="btn primary" onclick="closeModal()">Done</button></div>`);
 }
 
+/* ====================== PRODUCTION BOM (per product line) ====================== */
+function bomForLine(line){ return (state.bomItems||[]).filter(b=>b.line===line).sort((a,b)=>(a.sort||0)-(b.sort||0)); }
+function setBomLine(l){ state.bomLine=l; document.querySelectorAll('#bomLineChips .fchip').forEach(b=>b.classList.toggle('on',b.dataset.bl===l)); renderBom(); }
+function bomErr(error){ const m=(error&&error.message)||''; if(/relation|does not exist|schema cache|bom_items/i.test(m)) return 'Run the Production BOM add-on SQL in Supabase first'; return 'Save failed: '+m; }
+function renderBom(){
+  const box=el('bomPanel'); if(!box) return;
+  const line=state.bomLine||'RP-90';
+  const rows=bomForLine(line);
+  const itemOpts=(state.parts||[]).slice().sort((a,b)=>(a.description||'').localeCompare(b.description||''))
+    .map(p=>`<option value="${p.id}">${esc(p.description||p.sku||'Item')}${p.sku?' — '+esc(p.sku):''}</option>`).join('');
+  const total=rows.reduce((a,r)=>a+(Number(r.qty)||0)*(Number(r.unit_cost)||0),0);
+  const totQty=rows.reduce((a,r)=>a+(Number(r.qty)||0),0);
+  box.innerHTML=`
+    <div class="panel" style="padding:12px;margin-bottom:12px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1;min-width:200px"><label class="sub" style="display:block;margin-bottom:4px">Add item from catalog</label>
+          <select id="bomPick" style="width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)">${itemOpts||'<option value="">No items in catalog yet</option>'}</select></div>
+        <div style="width:90px"><label class="sub" style="display:block;margin-bottom:4px">Qty</label>
+          <input id="bomQty" type="number" min="1" value="1" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:9px;text-align:center;background:var(--surface);color:var(--ink)"/></div>
+        <button class="btn primary" onclick="addBomItem()">＋ Add</button>
+      </div>
+    </div>
+    <div class="panel">
+      <table>
+        <thead><tr><th>Item</th><th>SKU</th><th>Qty</th><th>Unit cost</th><th>Line cost</th><th></th></tr></thead>
+        <tbody>${rows.length?rows.map(r=>`<tr>
+          <td>${esc(r.description||'—')}</td>
+          <td class="mono sub">${esc(r.sku||'—')}</td>
+          <td><input class="mono" type="number" min="0" value="${Number(r.qty)||0}" onchange="updateBomQty('${r.id}',this.value)" style="width:62px;padding:5px;border:1px solid var(--line);border-radius:6px;text-align:center;background:var(--surface);color:var(--ink)"/></td>
+          <td class="mono">${r.unit_cost!=null?money(r.unit_cost):'—'}</td>
+          <td class="mono">${money((Number(r.qty)||0)*(Number(r.unit_cost)||0))}</td>
+          <td><button class="adel" onclick="delBomItem('${r.id}')">✕</button></td></tr>`).join('')
+          :`<tr><td colspan="6" class="sub" style="text-align:center;padding:26px">No components in the ${esc(line)} BOM yet. Add items from the catalog above.</td></tr>`}</tbody>
+      </table>
+    </div>
+    ${rows.length?`<div class="li-total">${rows.length} line${rows.length===1?'':'s'} · ${totQty} part${totQty===1?'':'s'} · Standard material cost: <strong class="mono">${money(total)}</strong></div>`:''}`;
+}
+async function addBomItem(){
+  const pid=el('bomPick')?.value; if(!pid){ toast('Add items to the catalog first'); return; }
+  const p=(state.parts||[]).find(x=>x.id===pid); if(!p){ toast('Pick an item'); return; }
+  const qty=Math.max(1,Number(el('bomQty').value)||1);
+  const rec={ line:state.bomLine||'RP-90', part_id:p.id, sku:p.sku||null, description:p.description||p.sku||'Item',
+    qty, unit_cost:(p.cost!=null?Number(p.cost):null), sort:bomForLine(state.bomLine||'RP-90').length };
+  const {error}=await sb.from('bom_items').insert(rec);
+  if(error){ toast(bomErr(error)); return; }
+  const {data}=await sb.from('bom_items').select('*').order('sort'); state.bomItems=data||[];
+  renderBom(); toast('Added to BOM');
+}
+function updateBomQty(id,val){
+  const q=Math.max(0,Number(val)||0);
+  const r=(state.bomItems||[]).find(x=>x.id===id); if(r) r.qty=q;
+  renderBom();
+  reliableWrite('bom:'+id, ()=>sb.from('bom_items').update({qty:q}).eq('id',id));
+}
+async function delBomItem(id){
+  const {data:row}=await sb.from('bom_items').select('*').eq('id',id).maybeSingle();
+  await sb.from('bom_items').delete().eq('id',id);
+  const {data}=await sb.from('bom_items').select('*').order('sort'); state.bomItems=data||[];
+  renderBom();
+  undoToast('Removed from BOM', async ()=>{ if(row) await sb.from('bom_items').insert(row);
+    const {data}=await sb.from('bom_items').select('*').order('sort'); state.bomItems=data||[]; renderBom(); });
+}
+
 /* ====================== AUTH / BOOT ====================== */
 async function signIn(){
   const email=el('liEmail').value.trim(), password=el('liPass').value;
@@ -4235,6 +4318,7 @@ function showApp(session){
   el('setupView').classList.add('hide');
   el('appView').classList.remove('hide');
   el('syncDot').classList.remove('on'); el('syncTxt').textContent='Loading…';
+  renderNav();
   loadAll();
 }
 function showLogin(){
